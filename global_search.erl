@@ -70,37 +70,37 @@ start(Flag, Arg) ->
 %%%====================================================================================
 
 -spec init_send(_) -> no_return().
-init_send({any, NodesList, Name, Msg, From}) ->
-    case whereis_any_loop(NodesList, Name) of
+init_send({any, NodesList, Name, SGroupName, Msg, From}) ->
+    case whereis_any_loop(NodesList, {Name, SGroupName}) of
 	undefined ->
-	    Res = {badarg,{Name, Msg}},
-	    gen_server:cast(s_group, {send_res, Res, Name, Msg, self(), From});
+	    Res = {badarg,{Name, SGroupName, Msg}},
+	    gen_server:cast(s_group, {send_res, Res, Name, SGroupName, Msg, self(), From});
 	Pid ->
-	    gen_server:cast(s_group, {send_res, Pid, Name, Msg, self(), From})
+	    gen_server:cast(s_group, {send_res, Pid, Name, SGroupName, Msg, self(), From})
     end,
     end_loop();
-init_send({group, Nodes, Name, Msg, From}) ->
-    case whereis_group_loop(Nodes, Name) of
+init_send({group, Nodes, Name, SGroupName, Msg, From}) ->
+    case whereis_group_loop(Nodes, {Name, SGroupName}) of
 	group_down ->
-	    Res = {badarg,{Name, Msg}},
-	    gen_server:cast(s_group, {send_res, Res, Name, Msg, self(), From});
+	    Res = {badarg,{Name, SGroupName, Msg}},
+	    gen_server:cast(s_group, {send_res, Res, Name, SGroupName, Msg, self(), From});
 	undefined ->
-	    Res = {badarg,{Name, Msg}},
-	    gen_server:cast(s_group, {send_res, Res, Name, Msg, self(), From});
+	    Res = {badarg,{Name, SGroupName, Msg}},
+	    gen_server:cast(s_group, {send_res, Res, Name, SGroupName, Msg, self(), From});
 	Pid ->
-	    gen_server:cast(s_group, {send_res, Pid, Name, Msg, self(), From})
+	    gen_server:cast(s_group, {send_res, Pid, Name, SGroupName, Msg, self(), From})
     end,
     end_loop();
-init_send({node, Node, Name, Msg, From}) ->
-    case whereis_check_node(Node, Name) of
+init_send({node, Node, Name, SGroupName, Msg, From}) ->
+    case whereis_check_node(Node, {Name, SGroupName}) of
 	node_down ->
-	    Res = {badarg,{Name, Msg}},
-	    gen_server:cast(s_group, {send_res, Res, Name, Msg, self(), From});
+	    Res = {badarg,{Name, SGroupName, Msg}},
+	    gen_server:cast(s_group, {send_res, Res, Name, SGroupName, Msg, self(), From});
 	undefined ->
-	    Res = {badarg,{Name, Msg}},
-	    gen_server:cast(s_group, {send_res, Res, Name, Msg, self(), From});
+	    Res = {badarg,{Name, SGroupName, Msg}},
+	    gen_server:cast(s_group, {send_res, Res, Name, SGroupName, Msg, self(), From});
 	Pid ->
-	    gen_server:cast(s_group, {send_res, Pid, Name, Msg, self(), From})
+	    gen_server:cast(s_group, {send_res, Pid, Name, SGroupName, Msg, self(), From})
     end,
     end_loop().
 
@@ -117,20 +117,20 @@ init_send({node, Node, Name, Msg, From}) ->
 %%%====================================================================================
 
 -spec init_whereis(_) -> no_return().
-init_whereis({any, NodesList, Name, From}) ->
-    R = whereis_any_loop(NodesList, Name),
+init_whereis({any, NodesList, Name, SGroupName, From}) ->
+    R = whereis_any_loop(NodesList, {Name, SGroupName}),
     gen_server:cast(s_group, {find_name_res, R, self(), From}),
     end_loop();
-init_whereis({group, Nodes, Name, From}) ->
-    case whereis_group_loop(Nodes, Name) of
+init_whereis({group, Nodes, Name, SGroupName, From}) ->
+    case whereis_group_loop(Nodes, {Name, SGroupName}) of
 	group_down ->
 	    gen_server:cast(s_group, {find_name_res, undefined, self(), From});
 	R ->
 	    gen_server:cast(s_group, {find_name_res, R, self(), From})
     end,
     end_loop();
-init_whereis({node, Node, Name, From}) ->
-    case whereis_check_node(Node, Name) of
+init_whereis({node, Node, Name, SGroupName, From}) ->
+    case whereis_check_node(Node, {Name, SGroupName}) of
 	node_down ->
 	    gen_server:cast(s_group, {find_name_res, undefined, self(), From});
 	R ->
@@ -149,7 +149,7 @@ init_whereis({node, Node, Name, From}) ->
 %%%====================================================================================
 %%%====================================================================================
 -spec init_names(_) -> no_return().
-init_names({group, Nodes, From}) ->
+init_names({s_group, Nodes, From}) ->
     case names_group_loop(Nodes) of
 	group_down ->
 	    gen_server:cast(s_group, {registered_names_res, [], self(), From});
@@ -181,14 +181,14 @@ end_loop() ->
 %%%====================================================================================
 %%% Search for the globally registered name in the whole known world.
 %%%====================================================================================
-whereis_any_loop([], _Name) ->
+whereis_any_loop([], {_Name, _SGroupName}) ->
     undefined;
-whereis_any_loop([{_Group_name, Nodes}|T], Name) ->
-    case whereis_group_loop(Nodes, Name) of
+whereis_any_loop([{_Group_name, Nodes}|T], {Name, SGroupName}) ->
+    case whereis_group_loop(Nodes, {Name, SGroupName}) of
 	group_down ->
-	    whereis_any_loop(T, Name);
+	    whereis_any_loop(T, {Name, SGroupName});
 	undefined ->
-	    whereis_any_loop(T, Name);
+	    whereis_any_loop(T, {Name, SGroupName});
 	R ->
 	    R
     end.
@@ -196,25 +196,25 @@ whereis_any_loop([{_Group_name, Nodes}|T], Name) ->
 %%%====================================================================================
 %%% Search for the globally registered name in a specified global group.
 %%%====================================================================================
-whereis_group_loop([], _Name) ->
+whereis_group_loop([], {_Name, _SGroupName}) ->
     group_down;
-whereis_group_loop([Node|T], Name) ->
-    case whereis_check_node(Node, Name) of
+whereis_group_loop([Node|T], {Name, SGroupName}) ->
+    case whereis_check_node(Node, {Name, SGroupName}) of
 	node_down ->
-	    whereis_group_loop(T, Name);
+	    whereis_group_loop(T, {Name, SGroupName});
 	R ->
 	    R
     end.
 %%%====================================================================================
 %%% Search for the globally registered name on a specified node.
 %%%====================================================================================
-whereis_check_node(Node, Name) ->
+whereis_check_node(Node, {Name, SGroupName}) ->
     case net_adm:ping(Node) of
 	pang ->
 	    node_down;
 	pong ->
 	    monitor_node(Node, true),
-	    gen_server:cast({s_group, Node},{find_name, self(), Name}),
+	    gen_server:cast({s_group, Node},{find_name, self(), Name, SGroupName}),
 	    receive
 		{nodedown, Node} ->
 		    node_down;
@@ -277,6 +277,5 @@ whereis_test(_Args) ->
 names_test(_Args) ->
     timer:sleep(5000),
     exit(testing_exit).
-
 
 
