@@ -149,20 +149,20 @@ init_whereis({node, Node, Name, SGroupName, From}) ->
 %%%====================================================================================
 %%%====================================================================================
 -spec init_names(_) -> no_return().
-init_names({s_group, Nodes, From}) ->
+init_names({s_group, SGroupName, Nodes, From}) ->
     case names_group_loop(Nodes) of
 	group_down ->
-	    gen_server:cast(s_group, {registered_names_res, [], self(), From});
+	    gen_server:cast(s_group, {registered_names_res, SGroupName, [], self(), From});
 	R ->
-	    gen_server:cast(s_group, {registered_names_res, R, self(), From})
+	    gen_server:cast(s_group, {registered_names_res, SGroupName, R, self(), From})
     end,
     end_loop();
 init_names({node, Node, From}) ->
     case names_check_node(Node) of
 	node_down ->
-	    gen_server:cast(s_group, {registered_names_res, [], self(), From});
+	    gen_server:cast(s_group, {registered_names_res, undefined, [], self(), From});
 	R ->
-	    gen_server:cast(s_group, {registered_names_res, R, self(), From})
+	    gen_server:cast(s_group, {registered_names_res, undefined, R, self(), From})
     end,
     end_loop().
 
