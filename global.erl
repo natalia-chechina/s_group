@@ -981,6 +981,7 @@ handle_cast({exchange, Node, NameList, _NameExtList, MyTag}, S) ->
 %% and {exchange, ...}.
 handle_cast({exchange_ops, Group, Node, MyTag, Ops, Resolved}, S0) ->  %% added Group by HL;
     %% Sent from the resolver for Node at node().
+    ?debug({"handle_exchange_ops_S0", S0}),
     ?trace({exchange_ops, {node,Node}, {ops,Ops}, {resolved,Resolved}, {mytag,MyTag}}),
     S = trace_message(S0, {exit_resolver, Node}, [MyTag]),
     case get({sync_tag_my, Node}) of
@@ -990,6 +991,8 @@ handle_cast({exchange_ops, Group, Node, MyTag, Ops, Resolved}, S0) ->  %% added 
                          false -> [];
                          {Group, Nodes} -> Nodes
                     end,
+	    ?debug({"handle_exchange_ops_S", S}),
+	    ?debug({"handle_exchange_ops_Node", Node}),
 	    gen_server:cast({global_name_server, Node},
 			    {resolved, Group, node(), Resolved, Known,
 			     Known, get_names_ext(), get({sync_tag_his, Node})}),
@@ -997,7 +1000,12 @@ handle_cast({exchange_ops, Group, Node, MyTag, Ops, Resolved}, S0) ->  %% added 
                 {resolved, HisKnown, Names_ext, HisResolved} ->
                     put({save_ops, Node}, Ops),
                     NewS = resolved(Group, Node, HisResolved, HisKnown, Names_ext,S),
+		    %% Unregister foreign names
+		    ?debug({"handle_exchange_ops_NewS", NewS}),
                     {noreply, NewS};
+		    %%NewS1 = unregister_foreign_names(NewS),
+		    %%?debug({"handle_exchange_ops_NewS1", NewS1}),
+                    %%{noreply, NewS1};
                 undefined -> 
                     put({save_ops, Node}, Ops),
                     {noreply, S}
@@ -1024,8 +1032,11 @@ handle_cast({resolved, Group, Node, HisResolved, HisKnown, _HisKnown_v2,  %%adde
             case get({save_ops, Node}) of
                 Ops when is_list(Ops) ->
                     NewS = resolved(Group, Node, HisResolved, HisKnown, Names_ext, S),
-		    ?debug({"resolvedNewS1", NewS}),
-                    {noreply, NewS};
+		    ?debug({"resolved_NewS", NewS}),
+		    %% Unregister foreign names
+		    NewS1 = unregister_foreign_names(NewS),
+		    ?debug({"resolved_NewS1", NewS1}),
+                    {noreply, NewS1};
                 undefined ->
                     Resolved = {resolved, HisKnown, Names_ext, HisResolved},
                     put({save_ops, Node}, Resolved),
@@ -1033,7 +1044,7 @@ handle_cast({resolved, Group, Node, HisResolved, HisKnown, _HisKnown_v2,  %%adde
             end;
 	_ -> %% Illegal tag, delete the old sync session.
 	    NewS = cancel_locker(Node, S, MyTag),
-	    ?debug({"resolvedNewS2", NewS}),
+	    ?debug({"resolvedNewSa", NewS}),
 	    {noreply, NewS}
     end;
 
@@ -1046,8 +1057,10 @@ handle_cast({new_nodes, Group, Node, Ops, Names_ext, Nodes, ExtraInfo}, S) ->
     %% Sent from global_name_server at Node.
     ?trace({new_nodes, {node,Node},{ops,Ops},{nodes,Nodes},{x,ExtraInfo}}),
     NewS = new_nodes(Ops, Group, Node, Names_ext, Nodes, ExtraInfo, S),
-    ?debug({"NewS1", NewS}),
-    {noreply, NewS};
+    ?debug({"new_nodes_NewS", NewS}),
+    NewS1 = unregister_foreign_names(NewS),
+    ?debug({"new_nodes_NewS1", NewS1}),
+    {noreply, NewS1};
 
 %%========================================================================
 %% in_sync
@@ -1195,7 +1208,9 @@ handle_info(Message, S) ->
     {noreply, S}.
 
 handle_node_up(Group, Node, S0) ->
+    ?debug({"node_up_S0", S0}),
     S1 = replace_no_group(Group, S0),
+    ?debug({"node_up_S1", S1}),
     IsKnown = lists:member(Node, 
                            case lists:keyfind(Group, 1, S1#state.known) of
                                false -> [];
@@ -1234,31 +1249,62 @@ handle_node_up(Group, Node, S0) ->
                     {resolvers,Rs}}),
 	    gen_server:cast({global_name_server, Node}, InitC),		%NC?
             Resolver = start_resolver(Group, Node, MyTag),
+	    %%?debug({"node_up_S2", S2}),
             S = trace_message(S2, {new_resolver, Node}, [MyTag, Resolver]),
-	    %%?debug(S),
+	    %%?debug({"node_up_S", S}),
 	    {noreply, S#state{resolvers = [{Node, MyTag, Resolver} | Rs]}}
     end.
 
 replace_no_group(Group, S) ->
+    ?debug({"replace_no_group_S", S}),
     Known = S#state.known,
-    Synced =S#state.synced,
-    S1=case lists:keyfind(no_group, 1, Known) of
-           false -> S;
-           {no_group, KnownNodes} ->
-               S#state{
-                 known=lists:keyreplace(
-                         no_group, 1, Known, {Group, KnownNodes})
-                }
-       end,
-    case lists:keyfind(no_group, 1, Synced) of
-        false -> S1;
-        {no_group, SyncedNodes} ->
-            S1#state{
-              synced=lists:keyreplace(
-                       no_group, 1, Synced, {Group, SyncedNodes})
-             }
+    Synced = S#state.synced,
+    ?debug({"replace_no_group_Group_Known_Synced", Group, Known, Synced}),
+    %% The state should depend on whether Group=='no_group'
+    case Group=='no_group' of
+        true ->
+	     S1 = case lists:keyfind(no_group, 1, Known) of
+                      false -> S;
+             	      {no_group, KnownNodes} ->
+		               S#state{known=lists:keyreplace(no_group, 1, Known,
+			  			              {Group, KnownNodes})}
+                  end,
+	     case lists:keyfind(no_group, 1, Synced) of
+                 false -> S1;
+        	 {no_group, SyncedNodes} ->
+		          S1#state{synced=lists:keyreplace(no_group, 1, Synced,
+	    				                   {Group, SyncedNodes})}
+             end;
+	false ->
+	      NodesToDisconnectK = case lists:keyfind(no_group, 1, Known) of
+                                      false -> [];
+                  		      {no_group, KnownNodes} -> KnownNodes
+	                           end,
+              NodesToDisconnectS = case lists:keyfind(no_group, 1, Synced) of
+                                       false -> [];
+				       {no_group, SyncedNodes} -> SyncedNodes
+                                   end,
+	      NodesToDisconnect = lists:append(NodesToDisconnectK, NodesToDisconnectS),
+	      ?debug({"replace_no_group_disconnect", NodesToDisconnect}),
+	      case NodesToDisconnect of
+	          [] -> S;
+		  _ -> 
+		     disconnect_synced_nodes(NodesToDisconnect, []),
+		     S#state{known=[], synced=[]}
+	      end
     end.
 
+
+disconnect_synced_nodes([], _DisconNodes) ->
+    ok;
+disconnect_synced_nodes([Node | RemConNodes], DisconNodes) ->
+    case lists:member(Node, DisconNodes) of
+        true ->
+	     disconnect_synced_nodes(RemConNodes, DisconNodes);
+	false ->
+	     erlang:disconnect_node(Node),
+	     disconnect_synced_nodes(RemConNodes, [Node | DisconNodes])
+    end.
 
 %%========================================================================
 %%========================================================================
@@ -1576,12 +1622,14 @@ code_change(_OldVsn, S, _Extra) ->
 %% is that locks can be used at the same time as name resolution takes
 %% place.
 start_resolver(Group, Node, MyTag) ->
+    %%?debug({"start_resolver_info", info()}),
     spawn(fun() -> resolver(Group, Node, MyTag) end).
 
 resolver(Group, Node, Tag) ->
     receive 
         {resolve, NameList, Node} ->
             ?trace({resolver, {me,self()}, {node,Node}, {namelist,NameList}}),
+	    ?debug({"resolver_info", info()}),
             {Ops, Resolved} = exchange_names(NameList, Node, [], []),
             Exchange = {exchange_ops, Group, Node, Tag, Ops, Resolved},
             gen_server:cast(global_name_server, Exchange),
@@ -1786,10 +1834,40 @@ sync_other(Group, Node, N) ->
 %%    insert_global_name(Name, undefined, Pid, Method, FromPidOrNode, ExtraInfo, S).
 
 insert_global_name(Name, SGroupName, Pid, Method, FromPidOrNode, ExtraInfo, S) ->	%NC
+    ?debug({"insert_global_name", Name, SGroupName}),
     {RPid, Ref} = do_monitor(Pid),
+%    RpcCallRes = rpc:call(node(), s_group, s_group_state, []),
+%    ?debug({"RpcCallRes", RpcCallRes}),
+%    Flag = case RpcCallRes of
+%    	       {ok, undefined, _OwnGrps} ->
+%                            case SGroupName of
+%		                undefined -> yes;
+%				_ -> no
+%		            end;
+%    	       {ok, _NodeGrps, OwnGrps} ->
+%                    case lists:keymember(SGroupName, 1, OwnGrps) of
+%		        true -> yes;
+%			_ -> no
+%                    end;
+%	       _ ->
+%                   no
+%           end,
+%     ?debug({"Flag", Flag}),
+%    case Flag of
+%        yes ->
+%             ?debug({"yes", yes}),
+%	     true = ets:insert(global_names, {{Name, SGroupName}, Pid, Method, RPid, Ref}),
+%    	     true = ets:insert(global_pid_names, {Pid, {Name, SGroupName}}),
+%    	     true = ets:insert(global_pid_names, {Ref, {Name, SGroupName}});
+%        _ ->
+%             ?debug({"no", no}),
+%	     true = true
+%    end,
+
     true = ets:insert(global_names, {{Name, SGroupName}, Pid, Method, RPid, Ref}),
     true = ets:insert(global_pid_names, {Pid, {Name, SGroupName}}),
     true = ets:insert(global_pid_names, {Ref, {Name, SGroupName}}),
+
     case lock_still_set(FromPidOrNode, ExtraInfo, S) of
         true -> 
             S;
@@ -2635,3 +2713,41 @@ intersection(_, []) ->
 intersection(L1, L2) ->
     L1 -- (L1 -- L2).
 
+
+unregister_foreign_names(S) ->
+    ?debug({"S", S}),
+    AllNames = registered_names(all_names),
+    ?debug({"unregister_foreign_names_AllNames", AllNames}),
+    {OwnGrps, _OwnNodes} = lists:unzip(S#state.known),
+    ?debug({"OwnGrps", OwnGrps}),
+    NewS = unregister_foreign_names(AllNames, OwnGrps, S),
+    NewAllNames = registered_names(all_names),
+    ?debug({"NewAllNames", NewAllNames}),
+    NewS.
+
+unregister_foreign_names([], _Groups, S) ->
+    ?debug({"unr_[]"}),
+    S;
+unregister_foreign_names([{_Name, SGroupName} | RemNames],
+                         [no_group], S) when SGroupName=='undefined' ->
+    ?debug({"unr_no_group_undef", SGroupName}),
+    unregister_foreign_names(RemNames, [no_group], S);
+unregister_foreign_names([{Name, SGroupName} | RemNames], [no_group], S) ->
+    ?debug({"del_unr_no_group_all", Name, SGroupName}),
+    S1 = delete_global_name2(Name, SGroupName, S),
+    unregister_foreign_names(RemNames, [no_group], S1);
+unregister_foreign_names([{Name, SGroupName} | RemNames], Groups, S)
+                                        when SGroupName=='undefined' ->
+    S1 = delete_global_name2(Name, SGroupName, S),
+    ?debug({"del_unr_all_undef", Name, SGroupName}),
+    unregister_foreign_names(RemNames, Groups, S1);
+unregister_foreign_names([{Name, SGroupName} | RemNames], Groups, S) ->
+    case lists:member(SGroupName, Groups) of
+        true ->
+    	      ?debug({"unr_all_all", Name, SGroupName}),
+              unregister_foreign_names(RemNames, Groups, S);
+	_ ->
+              S1 = delete_global_name2(Name, SGroupName, S),
+	      ?debug({"del_unr_all_all", Name, SGroupName}),
+	      unregister_foreign_names(RemNames, Groups, S1)
+    end.
