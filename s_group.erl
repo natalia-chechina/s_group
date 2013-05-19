@@ -48,7 +48,8 @@
          get_own_s_groups_with_nodes/0,
 	 s_group_state/0,
 	 ng_pairs/1,
-	 new_s_group_check/3, delete_s_group_check/1, add_nodes_check/3, remove_nodes_check/2]).
+	 new_s_group_check/3, s_group_conf_check/1,
+	 delete_s_group_check/1, add_nodes_check/3, remove_nodes_check/2]).
 
 %% Delete?
 -export([s_groups_changed/1]).
@@ -234,12 +235,17 @@ new_s_group(SGroupName, Nodes0) ->
 	       false ->
                     {error, remote_s_group};
 	       true ->
-                    request({new_s_group, SGroupName, Nodes})
+                    request({new_s_group, SGroupName, Nodes}),
+		    ?debug({"------------------------------------------------------"}),
+		    s_group:sync()
 	   end
     end.
 
 new_s_group_check(Node, PubType, {SGroupName, Nodes}) ->
     request({new_s_group_check, Node, PubType, {SGroupName, Nodes}}).
+
+s_group_conf_check(SGroupName) ->
+    request({s_group_conf_check, SGroupName}).
 
 -spec delete_s_group(SGroupName) -> 'ok' | {error, Reason} when
       SGroupName :: group_name(),
@@ -396,11 +402,11 @@ init([]) ->
                     update_publish_nodes(PT),
                     exit({error, {'invalid g_groups definition', NodeGrps}});
                 {ok, DefOwnSGroupsT, DefOtherSGroupsT} ->
-                    %%?debug({".config file scan result:",  {ok, DefOwnSGroupsT, DefOtherSGroupsT}}),
-                    DefOwnSGroupsT1 = [{GroupName,GroupNodes}||
-                                          {GroupName, _PubType, GroupNodes}
-                                              <- DefOwnSGroupsT],
-                    {DefSGroupNamesT1, DefSGroupNodesT1}=lists:unzip(DefOwnSGroupsT1),
+                    %%?debug({".config file scan result:", {ok, DefOwnSGroupsT, DefOtherSGroupsT}}),
+                    DefOwnSGroupsT1 = [{GroupName,GroupNodes} ||
+                                       {GroupName, _PubType, GroupNodes}
+                                       <- DefOwnSGroupsT],
+                    {DefSGroupNamesT1, DefSGroupNodesT1} = lists:unzip(DefOwnSGroupsT1),
                     DefSGroupNamesT = lists:usort(DefSGroupNamesT1),
                     DefSGroupNodesT = lists:usort(lists:append(DefSGroupNodesT1)),
                     update_publish_nodes(PT, {normal, DefSGroupNodesT}),
@@ -410,6 +416,7 @@ init([]) ->
                                           erlang:monitor_node(Node, true)
                                   end,
                                   DefSGroupNodesT),
+                    global_name_server ! {init_own_s_groups, DefOwnSGroupsT1},
                     NewState = #state{sync_state = synced,
 				      group_names = DefSGroupNamesT,
                                       own_grps = DefOwnSGroupsT1,
@@ -467,9 +474,9 @@ handle_call(sync, _From, S) ->
 			?debug({"sync_DefSGroupNamesT_PubType_DefOwnSGroupsT1",
 			              DefSGroupNamesT, PubType, DefOwnSGroupsT1}),
 			register(s_group_check, Pid),
-                        {DefSGroupNamesT, PubType, 
-                         lists:delete(node(), DefSGroupNodesT),
-                         DefOwnSGroupsT1, DefOtherSGroupsT}
+                        {DefSGroupNamesT, PubType,
+			     lists:delete(node(), DefSGroupNodesT),
+                             DefOwnSGroupsT1, DefOtherSGroupsT}
                 end,
             {reply, ok, S#state{sync_state = synced,
 	    	    		group_names = DefGroupNames, 
@@ -694,16 +701,16 @@ handle_call({whereis_name, Name, SGroupName}, From, S) ->
 %%% Create a new s_group.
 %%% -spec new_s_group(SGroupName, Nodes) -> 'ok' | {error, Reason}.
 %%%====================================================================================
-handle_call({new_s_group, SGroupName, Nodes}, _From, S) ->
-    %%?debug({new_s_group, SGroupName, Nodes}),
+handle_call({new_s_group, SGroupName, Nodes0}, _From, S) ->
+    %%?debug({new_s_group, SGroupName, Nodes0}),
     case lists:member(SGroupName, S#state.group_names) of 
         true ->
             {reply, {error, s_group_name_is_in_use}, S};
         false ->
             ok = global:set_s_group_name(SGroupName),
-	    ?debug({"new_s_group_Nodes", Nodes}),
-	    NewNodes = Nodes -- [node()],
-	    ?debug({"new_s_group_NewNodes", NewNodes}),
+	    ?debug({"new_s_group_Nodes0", Nodes0}),
+	    NewNodes0 = Nodes0 -- [node()],
+	    ?debug({"new_s_group_NewNodes0", NewNodes0}),
 	    case application:get_env(kernel, s_groups) of
                 undefined ->
 	   	   NoGroupNodes = global:get_known_s_group('no_group'),
@@ -714,10 +721,30 @@ handle_call({new_s_group, SGroupName, Nodes}, _From, S) ->
     	   	   ?debug({"new_s_group2_nodes(connected)", nodes(connected)}),
     	   	   ?debug({"new_s_group2_NoGroupNodes", NoGroupNodes});
 	        _ ->
-		   ConnectedNodes = NewNodes -- (NewNodes -- nodes(connected)),
+		   ConnectedNodes = NewNodes0 -- (NewNodes0 -- nodes(connected)),
     	   	   disconnect_nodes(ConnectedNodes),
     	   	   ?debug({"s_group_handle_new_s_group2_ConnectedNodes", ConnectedNodes})
     	    end,
+
+	    %%------------------------------------------------------------
+	    CCArgs = [SGroupName],
+            ?debug({"CCArgs:",CCArgs}),
+	    %% NS: agreed nodes; NNC: badrpc nodes; NSE: not_agreed nodes
+            {NS0, NNC0, NSE0} =
+                lists:foldl(fun(Node, {NN_cc, NNC_cc, NSE_cc}) -> 
+                           case rpc:call(Node, s_group, s_group_conf_check, CCArgs) of
+                               {badrpc, _} ->
+                                       {NN_cc, [Node | NNC_cc], NSE_cc};
+                               agreed ->
+                                       {[Node | NN_cc], NNC_cc, NSE_cc};
+                               not_agreed ->
+                                       {NN_cc, NNC_cc, [Node | NSE_cc]}
+                           end
+                end, {[], [], []}, NewNodes0),
+            ?debug({"NS0_NNC0_NSE0:",  {NS0, NNC0, NSE0}}),
+	    NewNodes = lists:usort(NS0),
+	    Nodes = lists:usort(NewNodes ++ [node()]),
+	    %%------------------------------------------------------------
 
 	    NewSGroupNames = lists:sort([SGroupName | S#state.group_names]),
 	    NewOwnSGroups = [{SGroupName, Nodes} | S#state.own_grps],
@@ -746,6 +773,9 @@ handle_call({new_s_group, SGroupName, Nodes}, _From, S) ->
                 end, {[], [], []}, NewNodes),
             ?debug({"NS_NNC_NSE1:",  {NS, NNC, NSE}}),
 
+	    %% Send s_group info update to the own global_name_server
+	    global_name_server ! {own_s_group_update, SGroupName, Nodes},
+
             ok = global:reset_s_group_name(),
 	    ?debug({"s_group_handle_new_s_group_S", S}),
             NewS = S#state{sync_state = synced, 
@@ -763,8 +793,17 @@ handle_call({new_s_group, SGroupName, Nodes}, _From, S) ->
     end;
 
 
+handle_call({s_group_conf_check, SGroupName}, _From, S) ->
+    ?debug({"s_group_conf_check_SGroupName", SGroupName}),
+    case lists:member(SGroupName, S#state.group_names) of
+        true ->
+	     {reply, not_agreed, S};
+        false ->
+    	     {reply, agreed, S}
+    end;
+
 handle_call({new_s_group_check, Node, _PubType, {SGroupName, Nodes}}, _From, S) ->
-    ?debug({{new_s_group_check, Node, _PubType, {SGroupName, Nodes}}, _From, S}),
+    ?debug({"new_s_group_check_Node_SGroupName_Nodes", Node, SGroupName, Nodes}),
     case lists:member(SGroupName, S#state.group_names) of
         true ->
 	     {reply, not_agreed, S};
@@ -796,6 +835,11 @@ handle_call({new_s_group_check, Node, _PubType, {SGroupName, Nodes}}, _From, S) 
     		          false -> S#state.other_grps;
 			  _ -> lists:keydelete(SGroupName, 1, S#state.other_grps)
 		      end,
+
+	     %% Send s_group info update to the own global_name_server
+	     %% Should I just send the whole NewS#state.own_grps? - No
+	     global_name_server ! {own_s_group_update, SGroupName, Nodes},
+
              ?debug({"s_group_handle_add_nodes_check_S", S}),
     	     NewS= S#state{sync_state = synced,
     	                   group_names = NewSGroupNames,
@@ -1485,11 +1529,11 @@ handle_node_up(Node, S) ->
     case shared_s_groups_match(OwnNGs, OthersNG) of 
         true->
             OthersGroups = element(1, lists:unzip(OthersNG)),
-            CommonGroups = intersection(OwnGroups, OthersGroups),
+            CmnGroups = intersection(OwnGroups, OthersGroups),
             send_monitor(S#state.monitor, {nodeup, Node}, S#state.sync_state),
-            ?debug({s_group_nodeup_handle_node_up, OwnGroups, Node, CommonGroups}),
-	    %%[global_name_server ! {nodeup_s, Group, Node} || Group <- CommonGroups],
-	    global_name_server ! {nodeup_s, CommonGroups, Node},
+            ?debug({s_group_nodeup_handle_node_up, OwnGroups, Node, CmnGroups}),
+	    %%[global_name_server ! {nodeup_s, Group, Node} || Group <- CmnGroups],
+	    global_name_server ! {nodeup_s, CmnGroups, Node},
 	    case lists:member(Node, S#state.nodes) of
 		false ->
 		    NN = lists:sort([Node | S#state.nodes]),
