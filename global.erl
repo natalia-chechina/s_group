@@ -40,7 +40,8 @@
 	 sync/0, sync/1]).
 
 -export([set_s_group_name/1, reset_s_group_name/0, reset_global_state/0,
-	 add_s_group/1, delete_s_group/1,
+	 %add_s_group/1,
+	 delete_s_group/1,
 	 remove_s_group_nodes/2]).
 
 -export([set_lock/1, set_lock/2, set_lock/3, del_lock/1, del_lock/2,
@@ -608,8 +609,8 @@ reset_s_group_name() ->
 reset_global_state() ->
     request({reset_global_state}).
 
-add_s_group(SGroupName) ->
-    request({add_s_group, SGroupName}).
+%add_s_group(SGroupName) ->
+%    request({add_s_group, SGroupName}).
 
 delete_s_group(SGroupName) ->
     request({delete_s_group, SGroupName}).
@@ -875,15 +876,15 @@ handle_call({reset_global_state}, _From, S) ->	%% NC Added
 handle_call(get_s_group_name, _From, S) ->
     {reply, S#state.s_group, S};
 
-handle_call({add_s_group, SGroupName}, _From, S) ->
-    NewS = S#state{known=[{G, Ns}||{G, Ns} <- S#state.known, G/=SGroupName],
-                   synced=[{G, Ns}||{G, Ns} <- S#state.synced, G/=SGroupName]
-                  },
-    NewS1 = NewS#state{known=[{SGroupName, []} | S#state.known],
-                       synced=[{SGroupName, []} | S#state.synced]
-                       },
-    ?debug({global_add_s_group_S, NewS1}),
-    {reply, ok, NewS1};
+%handle_call({add_s_group, SGroupName}, _From, S) ->
+%    NewS = S#state{known=[{G, Ns}||{G, Ns} <- S#state.known, G/=SGroupName],
+%                   synced=[{G, Ns}||{G, Ns} <- S#state.synced, G/=SGroupName]
+%                  },
+%    NewS1 = NewS#state{known=[{SGroupName, []} | S#state.known],
+%                       synced=[{SGroupName, []} | S#state.synced]
+%                       },
+%    ?debug({global_add_s_group_S, NewS1}),
+%    {reply, ok, NewS1};
 
 handle_call({delete_s_group, SGroupName}, _From, S) ->
     NewS = S#state{known=[{G, Ns}||{G, Ns} <- S#state.known, G/=SGroupName],
