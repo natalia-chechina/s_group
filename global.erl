@@ -48,7 +48,7 @@
 	 trans/2, trans/3, trans/4,
 	 random_exit_name/3, random_notify_name/3,
 	 notify_all_name/3,
-	 node_disconnected/1]).
+	 node_disconnected/1, node_connected/1]).
 
 %% Internal exports
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -99,9 +99,9 @@
 -define(vsn, 5).
 
 
-%%-define(debug(_), ok). 
+-define(debug(_), ok). 
 
--define(debug(Term), erlang:display(Term)).
+%%-define(debug(Term), erlang:display(Term)).
 
 
 %%-----------------------------------------------------------------
@@ -198,12 +198,15 @@ stop() ->
 
 -spec sync() -> 'ok' | {'error', Reason :: term()}.
 sync() ->
+    ?debug({"global_sync"}),
     case s_group:s_groups() of
      	  undefined ->
 	      case check_sync_nodes() of
 	      	{error, _} = Error ->
+			?debug({"global_sync_Error", Error}),
 	    		Error;
 		SyncNodes ->
+		        ?debug({"global_sync_SyncNodes", SyncNodes}),
 	    		gen_server:call(global_name_server, {sync,
 			SyncNodes}, infinity)
 	      end;
@@ -215,8 +218,10 @@ sync() ->
 sync(Nodes) ->
     case check_sync_nodes(Nodes) of
 	{error, _} = Error ->
+	    ?debug({"global_sync1_Error", Error}),
 	    Error;
 	SyncNodes ->
+	    ?debug({"global_sync1_SyncNodes", SyncNodes}),
 	    gen_server:call(global_name_server, {sync, SyncNodes}, infinity)
     end.
 
@@ -263,6 +268,8 @@ whereis_name(Name, SGroupName) ->
 node_disconnected(Node) ->
     global_name_server ! {nodedown, Node}.
 
+node_connected(Node) ->
+    global_name_server ! {nodeup, no_group, Node}.
 %%-----------------------------------------------------------------
 %% Method = function(Name, Pid1, Pid2) -> Pid | Pid2 | none
 %% Method is called if a name conflict is detected when two nodes
@@ -1324,16 +1331,22 @@ handle_info({init_own_s_groups, OwnSGroups}, S0) ->
     ?debug({"init_s_groups", OwnSGroups}),
     {noreply, S0#state{own_s_groups = OwnSGroups}};
 
-handle_info({own_s_group_update, SGroupName, Nodes}, S0) ->
+handle_info({own_s_group_update, SGroupName, Nodes}, S) ->
     %% OwnSGroups::[{SGroupName, [Node]}]
     ?debug({"own_s_group_update", SGroupName, Nodes}),
-    OwnSGroups = S0#state.own_s_groups,
+    OwnSGroups = S#state.own_s_groups,
     NewOwnSGroups = case lists:keyfind(SGroupName, 1, OwnSGroups) of
                         false -> [{SGroupName, Nodes} | OwnSGroups];
 		      	_ -> lists:keyreplace(SGroupName, 1, OwnSGroups,
 		                              {SGroupName, Nodes})
                     end,
-    {noreply, S0#state{own_s_groups = NewOwnSGroups}};
+    {noreply, S#state{own_s_groups = NewOwnSGroups}};
+
+handle_info({own_s_group_delete, SGroupName}, S) ->
+    %% OwnSGroups::[{SGroupName, [Node]}]
+    ?debug({"own_s_group_delete", SGroupName}),
+    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_s_groups),
+    {noreply, S#state{own_s_groups = NewOwnSGroups}};
 
 %% "High level trace". For troubleshooting only.
 handle_info(high_level_trace, S) ->
@@ -2968,7 +2981,7 @@ check_sync_nodes(SyncNodes) ->
 get_own_nodes() ->
     case s_group:get_own_nodes_with_errors() of
         {error, Error} ->
-            {error, {"global_groups definition error", Error}};
+            {error, {"s_group definition error", Error}};
         OkTup ->
             OkTup
     end.
