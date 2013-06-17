@@ -71,9 +71,9 @@
 
 -define(cc_vsn, 2).
 
--define(debug(_), ok).
+%%-define(debug(_), ok).
 
-%%-define(debug(Term), erlang:display(Term)).
+-define(debug(Term), erlang:display(Term)).
 
 %%%====================================================================================
 
@@ -291,7 +291,7 @@ remove_nodes(SGroupName, Nodes0) ->
     Nodes = lists:usort(Nodes0),
     case Nodes of
         [] ->
-	    ok1;
+	    ok;
 	_ ->
 	    case lists:member(node(), Nodes) of
 	        true ->
@@ -301,17 +301,14 @@ remove_nodes(SGroupName, Nodes0) ->
 		        {ok, delete_s_group} ->
 			    delete_s_group(SGroupName);
 			{ok, []} ->
-			    ok2;
+			    ok;
 			{ok, RmvNodes} ->
-			    %% To every of the removed nodes I need to spawn a process
-			    %% If the node is free, it should establish connections with
-			    %% other free nodes
-			    %% If the node is an s_group node, it should syncronise with other
-			    %% node with which it may have lost connections.
+			    %% To every removed node we spawn a process. If the node became free,
+			    %% it will establish connections with other free nodes.
 			    lists:foreach(fun(Node) ->
 			          spawn(Node, ?MODULE, connect_free_nodes, [])
 			    end, RmvNodes),
-			    ok3;
+			    ok;
 			Result ->
 			    Result
 		    end
@@ -2252,19 +2249,13 @@ publish_on_nodes(normal, no_group) ->
     all;
 publish_on_nodes(hidden, no_group) ->
     [];
-publish_on_nodes(normal, {normal, _}) ->
-    all;
+publish_on_nodes(normal, {normal, Nodes}) ->
+%    all;
+    Nodes;
 publish_on_nodes(hidden, {_, Nodes}) ->
     Nodes;
 publish_on_nodes(_, {hidden, Nodes}) ->
     Nodes.
-
-%publish_on_nodes(normal, no_group) ->
-%    all;
-%publish_on_nodes(hidden, no_group) ->
-%    [];
-%publish_on_nodes(_, {_, Nodes}) ->
-%    Nodes.
 
 %%%====================================================================================
 %%% Update net_kernels publication list
