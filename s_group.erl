@@ -26,6 +26,7 @@
 -export([start/0, start_link/0, stop/0, init/1]).
 -export([handle_call/3, handle_cast/2, handle_info/2, 
 	 terminate/2, code_change/3]).
+-export([config_scan/1, config_scan/2]).
 
 -export([register_name/3, register_name_external/3,
 	 unregister_name/2, unregister_name_external/2,
@@ -39,12 +40,13 @@
 	 sync/0,
 	 new_s_group/2,
 	 add_nodes/2,
-
 	 info/0,
-	 monitor_nodes/1,
-	 delete_s_group/1, remove_nodes/2]).
+	 delete_s_group/1, remove_nodes/2,
 
--export([publish_on_nodes/0,
+	 choose_nodes/1,
+ 	 monitor_nodes/1]).
+
+-export([publish_on_nodes/0, 
 	 get_own_nodes/0, get_own_nodes_with_errors/0,
          get_own_s_groups_with_nodes/0,
 	 s_group_state/0,
@@ -52,14 +54,13 @@
 	 new_s_group_check/4, s_group_conflict_check/1,
 	 delete_s_group_check/3, add_nodes_check/3, remove_nodes_check/3]).
 
--export([connect_free_nodes/0, is_free_normal/0]).
+-export([force_nodedown/1, connect_free_nodes/0, is_free_normal/0]).
 
 %% Delete?
--export([s_groups_changed/1]).
--export([s_groups_added/1]).
--export([s_groups_removed/1]).
--export([ng_add_check/2, ng_add_check/3]).
--export([config_scan/1, config_scan/2]).
+%-export([s_groups_changed/1]).
+%-export([s_groups_added/1]).
+%-export([s_groups_removed/1]).
+%-export([ng_add_check/2, ng_add_check/3]).
 -export([registered_names_test/1]).
 -export([send_test/2]).
 -export([whereis_name_test/1]).
@@ -175,9 +176,6 @@ send(Name, SGroupName, Msg) ->
       Pid :: pid().
 send(Node, Name, SGroupName, Msg) ->
     request({send, Node, Name, SGroupName, Msg}).
-
-
-
 
 -spec register_name(Name, SGroupName, Pid) -> 'yes' | 'no' when	%NC
       Name :: term(),
@@ -338,24 +336,34 @@ delete_s_group_check(InitNode, SGroupName, NewSGroupNodes) ->
 s_group_state() ->
     request({s_group_state}).
 
-s_groups_changed(NewPara) ->
-    request({s_groups_changed, NewPara}).
+choose_nodes(Args) ->
+    ListOfNodes = choose_nodes(Args, []),
+    overlap_nodes(ListOfNodes, []).
 
-s_groups_added(NewPara) ->
-    request({s_groups_added, NewPara}).
+choose_nodes([], ListOfNodes) ->
+    ListOfNodes;
+choose_nodes([Arg | Args], ListOfNodes) ->
+    Nodes = request({choose_nodes, Arg}),
+    choose_nodes(Args, [Nodes | ListOfNodes]).
 
-s_groups_removed(NewPara) ->
-    request({s_groups_removed, NewPara}).
+%%s_groups_changed(NewPara) ->
+%%    request({s_groups_changed, NewPara}).
+
+%%s_groups_added(NewPara) ->
+%%    request({s_groups_added, NewPara}).
+
+%%s_groups_removed(NewPara) ->
+%%    request({s_groups_removed, NewPara}).
 
 -spec sync() -> 'ok'.
 sync() ->
     request(sync).
 
-ng_add_check(Node, OthersNG) ->
-    ng_add_check(Node, normal, OthersNG).
+%%ng_add_check(Node, OthersNG) ->
+%%    ng_add_check(Node, normal, OthersNG).
 
-ng_add_check(Node, PubType, OthersNG) ->
-    request({ng_add_check, Node, PubType, OthersNG}).
+%%ng_add_check(Node, PubType, OthersNG) ->
+%%    request({ng_add_check, Node, PubType, OthersNG}).
 
 -type info_item() :: {'state', 	 	  State :: sync_state()}
                    | {'own_group_names',  GroupName :: [group_name()]}
@@ -1254,92 +1262,30 @@ handle_call({remove_nodes_check, SGroupName, NewSGroupNodes, NodesToRmv}, _From,
                    },
     {reply, agreed, NewS};
 
-
-
+%%%======================================================================
+%%% Remove nodes from an s_group
+%%% -spec choose_nodes(Arg) -> [Node].
+%%%======================================================================
+handle_call({choose_nodes, Arg}, _From, S) ->
+    Nodes =
+        case Arg of
+            {s_group, SGroupName} ->
+	        case lists:keyfind(SGroupName, 1, S#state.own_grps) of 
+	            {SGroupName, SGroupNodes} ->
+		        SGroupNodes -- [node()];
+		    _ ->
+		        []
+	        end;
+	    _ ->
+	        []
+        end,
+    {reply, Nodes, S};
 
 
 handle_call({s_group_state}, _From, S) ->
     NodeGrps = application:get_env(kernel, s_groups),
     OwnGrps = S#state.own_grps,
     {reply, {ok, NodeGrps, OwnGrps}, S};
-
-
-%%%====================================================================================
-%%% s_groups parameter changed
-%%% The node is not resynced automatically because it would cause this node to
-%%% be disconnected from those nodes not yet been upgraded.
-%%%====================================================================================
-handle_call({s_groups_changed, NewPara}, _From, S) ->
-    %% Need to be changed because of the change of config_scan HL
-    {NewGroupName, PubTpGrp, NewNodes, NewOther} = 
-	case catch config_scan(NewPara, publish_type) of
-	    {error, _Error2} ->
-		exit({error, {'invalid s_groups definition', NewPara}});
-	    {DefGroupName, PubType, DefNodes, DefOther} ->
-		update_publish_nodes(S#state.publish_type, {PubType, DefNodes}),
-		{DefGroupName, PubType, DefNodes, DefOther}
-	end,
-
-    %% #state.nodes is the common denominator of previous and new definition
-    NN = NewNodes -- (NewNodes -- S#state.nodes),
-    %% rest of the nodes in the new definition are marked as not yet contacted
-    NNC = (NewNodes -- S#state.nodes) --  S#state.sync_error,
-    %% remove sync_error nodes not belonging to the new group
-    NSE = NewNodes -- (NewNodes -- S#state.sync_error),
-
-    %% Disconnect the connection to nodes which are not in our old global group.
-    %% This is done because if we already are aware of new nodes (to our global
-    %% group) global is not going to be synced to these nodes. We disconnect instead
-    %% of connect because upgrades can be done node by node and we cannot really
-    %% know what nodes these new nodes are synced to. The operator can always 
-    %% manually force a sync of the nodes after all nodes beeing uppgraded.
-    %% We must disconnect also if some nodes to which we have a connection
-    %% will not be in any global group at all.
-    force_nodedown(nodes(connected) -- NewNodes),
-
-    NewS = S#state{group_names = [NewGroupName], 
-		   nodes = lists:sort(NN), 
-		   no_contact = lists:sort(lists:delete(node(), NNC)), 
-		   sync_error = lists:sort(NSE), 
-		   other_grps = NewOther,
-		   group_publish_type = PubTpGrp},
-    {reply, ok, NewS};
-
-
-
-
-
-
-
-
-
-%%%====================================================================================
-%%% s_groups parameter added to some other node which thinks that we
-%%% belong to the same global group.
-%%% It could happen that our node is not yet updated with the new node_group parameter
-%%%====================================================================================
-handle_call({ng_add_check, Node, PubType, OthersNG}, _From, S) ->
-    %% Check which nodes are already updated
-    erlang:display("TTTTTTTTTTTTTTTTTTTTTTTTTTTTT\n"),
-    OwnNG = get_own_nodes(),
-    case S#state.group_publish_type =:= PubType of
-	true ->
-	    case OwnNG of
-		OthersNG ->
-		    NN = [Node | S#state.nodes],
-		    NSE = lists:delete(Node, S#state.sync_error),
-		    NNC = lists:delete(Node, S#state.no_contact),
-		    NewS = S#state{nodes = lists:sort(NN), 
-				   sync_error = NSE, 
-				   no_contact = NNC},
-		    {reply, agreed, NewS};
-		_ ->
-		    {reply, not_agreed, S}
-	    end;
-	_ ->
-	    {reply, not_agreed, S}
-    end;
-
 
 
 %%%====================================================================================
@@ -2386,3 +2332,14 @@ is_free_normal() ->
 	    %% The node is an s_group node
 	    no
     end.
+
+overlap_nodes([], OverlapNodes) ->
+    OverlapNodes;
+overlap_nodes([Nodes | ListOfNodes], OverlapNodes) ->
+    NewOverlapNodes = case OverlapNodes of
+        	          [] ->
+			      Nodes;
+			  _ ->
+			      OverlapNodes -- (OverlapNodes -- Nodes)
+    		      end,
+    overlap_nodes(ListOfNodes, NewOverlapNodes).
