@@ -39,11 +39,6 @@
 	 own_s_groups/0,	 
 	 sync/0, sync/1]).
 
--export([set_s_group_name/1, reset_s_group_name/0, reset_global_state/0,
-	 %add_s_group/1,
-	 delete_s_group/1,
-	 remove_s_group_nodes/2]).
-
 -export([set_lock/1, set_lock/2, set_lock/3, del_lock/1, del_lock/2,
 	 trans/2, trans/3, trans/4,
 	 random_exit_name/3, random_notify_name/3,
@@ -607,23 +602,8 @@ info() ->
 get_s_group_name() ->
     request(get_s_group_name).
 
-set_s_group_name(SGroupName) ->
-    request({set_s_group_name, SGroupName}).
-
-reset_s_group_name() ->
-    request({set_s_group_name, no_group}).
-
-reset_global_state() ->
-    request({reset_global_state}).
-
-%add_s_group(SGroupName) ->
-%    request({add_s_group, SGroupName}).
-
-delete_s_group(SGroupName) ->
-    request({delete_s_group, SGroupName}).
-
-remove_s_group_nodes(SGroupName, NodesToRm)->
-    request({remove_s_group_nodes, SGroupName, NodesToRm}).
+unregister_foreign_names() ->
+    request({unregister_foreign_names}).
 
 request(Req) ->
     request(Req, infinity).
@@ -871,68 +851,12 @@ handle_call(high_level_trace_get, _From, #state{trace = Trace}=S) ->
 handle_call(stop, _From, S) ->
     {stop, normal, stopped, S};
 
-handle_call({set_s_group_name, SGroupName}, _From, S) ->
-    {reply, ok, S#state{s_group = SGroupName}};
-
-handle_call({reset_global_state}, _From, S) ->	%% NC Added
-    NewS = S#state{known=[],
-                   synced=[]
-                  },
+handle_call({unregister_foreign_names}, _From, S) ->
+    NewS = unregister_foreign_names(S),
     {reply, ok, NewS};
 
 handle_call(get_s_group_name, _From, S) ->
     {reply, S#state.s_group, S};
-
-%handle_call({add_s_group, SGroupName}, _From, S) ->
-%    NewS = S#state{known=[{G, Ns}||{G, Ns} <- S#state.known, G/=SGroupName],
-%                   synced=[{G, Ns}||{G, Ns} <- S#state.synced, G/=SGroupName]
-%                  },
-%    NewS1 = NewS#state{known=[{SGroupName, []} | S#state.known],
-%                       synced=[{SGroupName, []} | S#state.synced]
-%                       },
-%    ?debug({global_add_s_group_S, NewS1}),
-%    {reply, ok, NewS1};
-
-handle_call({delete_s_group, SGroupName}, _From, S) ->
-    NewS = S#state{known=[{G, Ns}||{G, Ns} <- S#state.known, G/=SGroupName],
-                   synced=[{G, Ns}||{G, Ns} <- S#state.synced, G/=SGroupName]
-                  },
-    {reply, ok, NewS};
-
-handle_call({remove_s_group_nodes, SGroupName, NodesToRm}, _From, S) ->
-    case lists:member(node(), NodesToRm) of 
-        true ->
-            NewS = S#state{known=[{G, Ns}||{G, Ns} <- S#state.known, G/=SGroupName],
-                           synced=[{G, Ns}||{G, Ns} <- S#state.synced, G/=SGroupName]
-                          },
-            {reply, ok, NewS};
-
-        false ->
-            KnownSGroupNodes = case lists:keyfind(SGroupName, 1, S#state.known) of 
-				  false -> [];
-                                  {_, Ns} -> Ns
-                               end,
-            NewKnownSGroupNodes = KnownSGroupNodes -- NodesToRm,
-            SyncedSGroupNodes = case lists:keyfind(SGroupName, 1, S#state.synced)of 
-                                    false -> [];
-                                    {_, Ns1} -> Ns1
-                                end,
-            NewSyncedSGroupNodes = SyncedSGroupNodes -- NodesToRm,
-            NewKnown = case NewKnownSGroupNodes of 
-                           [] -> lists:keydelete(SGroupName, 1, KnownSGroupNodes);
-                           _ -> lists:keyreplace(SGroupName, 1, S#state.known,
-                                                 {SGroupName, NewKnownSGroupNodes})
-                       end,
-            NewSynced = case NewSyncedSGroupNodes of 
-                           [] -> lists:keydelete(SGroupName, 1, SyncedSGroupNodes);
-                           _ -> lists:keyreplace(SGroupName,1, S#state.synced,  
-                                                 {SGroupName, NewSyncedSGroupNodes})
-                       end,
-            NewS = S#state{known=NewKnown,
-                           synced=NewSynced
-                          },
-            {reply, ok, NewS}
-    end;
 
 handle_call(Request, From, S) ->
     error_logger:warning_msg("The global_name_server "

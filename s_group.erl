@@ -40,7 +40,6 @@
 	 new_s_group/2,
 	 add_nodes/2,
 
-	 %% Check
 	 info/0,
 	 monitor_nodes/1,
 	 delete_s_group/1, remove_nodes/2]).
@@ -77,8 +76,8 @@
 
 %%%====================================================================================
 
--type publish_type() :: 'hidden' | 'normal'.
-%-type publish_type() :: 'normal'.
+%-type publish_type() :: 'hidden' | 'normal'.
+-type publish_type() :: 'normal'.
 -type sync_state()   :: 'no_conf' | 'synced'.
 
 -type group_name()  :: atom().
@@ -297,60 +296,44 @@ remove_nodes(SGroupName, Nodes0) ->
 	        true ->
 		    {error, "cannot_remove_itself"};
 		false ->
-		    case remove_nodes1(SGroupName, Nodes) of
+		    case remove_nodes_request(SGroupName, Nodes) of
 		        {ok, delete_s_group} ->
 			    delete_s_group(SGroupName);
-			{ok, []} ->
-			    ok;
-			{ok, RmvNodes} ->
-			    %% To every removed node we spawn a process. If the node became free,
-			    %% it will establish connections with other free nodes.
-			    lists:foreach(fun(Node) ->
-			          spawn(Node, ?MODULE, connect_free_nodes, [])
-			    end, RmvNodes),
-			    ok;
 			Result ->
 			    Result
 		    end
 	    end
     end.
 
-remove_nodes1(SGroupName, Nodes) ->
+remove_nodes_request(SGroupName, Nodes) ->
     request({remove_nodes, SGroupName, Nodes}).	  
 
 remove_nodes_check(SGroupName, NewSGroupNodes, NodesToRmv) ->
     request({remove_nodes_check, SGroupName, NewSGroupNodes, NodesToRmv}).
 
-
-
 -spec delete_s_group(SGroupName) -> 'ok' | {error, Reason} when
       SGroupName :: group_name(),
       Reason :: term().
 
-
 delete_s_group(SGroupName) ->
-    request({delete_s_group, SGroupName}).
+    case request({delete_s_group, SGroupName}) of
+        ok ->
+	    global:unregister_foreign_names(),
+	    case application:get_env(kernel, s_groups) of
+	        undefined ->
+		    ?debug({"delete_s_group_x1"}),
+		    connect_free_nodes();
+		_ ->
+		    ?debug({"delete_s_group_x2"}),
+		    sync()
+	    end,
+	    ok;
+	Result ->
+	    Result
+    end.
 
 delete_s_group_check(InitNode, SGroupName, NewSGroupNodes) ->
     request({delete_s_group_check, InitNode, SGroupName, NewSGroupNodes}).
-
-
-is_free_normal() ->
-    case application:get_env(kernel, s_groups) of
-        undefined ->
-	    %% The node is free
-	    case publish_arg() of
-	        normal ->
-		    %% The node is free normal
-		    yes;
-		_ ->
-		    %% The node is free hidden
-		    no
-	    end;	
-	_ ->
-	    %% The node is an s_group node
-	    no
-    end.
 
 s_group_state() ->
     request({s_group_state}).
@@ -783,7 +766,6 @@ handle_call({new_s_group, SGroupName, Nodes0}, _From, S) ->
         true ->
             {reply, {error, s_group_name_is_in_use}, S};
         false ->
-            ok = global:set_s_group_name(SGroupName),
 	    ?debug({"new_s_group_Nodes0", Nodes0}),
 	    NewNodes0 = Nodes0 -- [node()],
 	    ?debug({"new_s_group_NewNodes0", NewNodes0}),
@@ -834,7 +816,6 @@ handle_call({new_s_group, SGroupName, Nodes0}, _From, S) ->
 	    %% Send s_group info update to the own global_name_server
 	    global_name_server ! {own_s_group_update, SGroupName, Nodes},
 
-            ok = global:reset_s_group_name(),
 	    ?debug({"s_group_handle_new_s_group_S", S}),
             NewS = S#state{sync_state = synced, 
 		           group_names = NewSGroupNames,
@@ -908,104 +889,129 @@ handle_call({new_s_group_check, Node, _PubType, SGroupName, Nodes}, _From, S) ->
 %%% -spec delete_s_group(SGroupName) -> 'ok' | {error, Reason}.
 %%%======================================================================
 handle_call({delete_s_group, SGroupName}, _From, S) ->
-    %%?debug({delete_s_group, SGroupName}),
-    case lists:member(SGroupName, S#state.group_names) of 
+    ?debug({delete_s_group, SGroupName}),
+    case lists:keyfind(SGroupName, 1, S#state.own_grps) of 
         false ->
-            {reply, ok, S};
-        true ->
-            global:delete_s_group(SGroupName),
-            NewConf = dlt_from_s_group_tuples(SGroupName),
-            application:set_env(kernel, s_groups, NewConf),
-            SGroupNodes = case lists:keyfind(SGroupName, 1, S#state.own_grps) of 
-                             {_, Ns} -> Ns;
-                             false -> []  %% this should not happen.
-                         end,
-            OtherSGroupNodes = lists:usort(lists:append(
-			       [Ns || {G, Ns} <- S#state.own_grps, G /= SGroupName])),
-            OtherNodes = lists:delete(node(), SGroupNodes),
-            [rpc:call(Node, s_group, delete_s_group_check1, [SGroupName]) ||
-                	    	     			   	Node <- OtherNodes],
-            NewS = S#state{sync_state = if length(S#state.group_names)==1 -> no_conf;
-                                           true -> synced
-                                        end,
-                           group_names = S#state.group_names -- [SGroupName],
-                           nodes = S#state.nodes -- (SGroupNodes -- OtherSGroupNodes),
-                           sync_error = S#state.sync_error -- SGroupNodes, 
-                           no_contact = S#state.no_contact -- SGroupNodes,
-                           own_grps = S#state.own_grps -- [{SGroupName, SGroupNodes}] 
-                          },
-            {reply, ok, NewS}
+            {reply, {error, {"remote_s_group", SGroupName}}, S};
+	{SGroupName, SGroupNodes} ->
+	    ?debug({"delete_s_group_SGroupNodes", SGroupNodes}),
+	    %% Send s_group info update to the own global_name_server
+	    global_name_server ! {own_s_group_delete, SGroupName},
+
+	    %% Delete s_group SGroupName
+	    NewSGroupNames = lists:delete(SGroupName, S#state.group_names),
+	    case NewSGroupNames of
+	        [] ->
+		    %% The node becomes free
+		    application:unset_env(kernel, s_groups),
+
+		    NewSyncState = no_conf,
+	    	    NewNodes = [],
+	    	    NewNoContact = [],
+	    	    NewSyncError = [],
+	    	    NewOwnSGroups = [],
+	    	    NewOtherSGroups = [];
+		_ ->
+		    %% The node remains an s_group node
+		    NewConf = dlt_from_s_group_tuples(SGroupName),
+	    	    application:set_env(kernel, s_groups, NewConf),
+
+		    NewSyncState = synced,
+	    	    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_grps),
+	    	    NewOtherSGroups = S#state.other_grps,
+	    	    NewNodes = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
+	    	    NewNoContact = [Nds || Nds1 <- NewNodes, Nds <- S#state.no_contact, Nds1==Nds],
+	    	    NewSyncError = [Nds || Nds1 <- NewNodes, Nds <- S#state.sync_error, Nds1==Nds]
+	    end,
+
+	    DelArgs = [node(), SGroupName, []],
+	    ?debug({"DelArgs:", DelArgs}),
+	    %% NS: agreed nodes; NNC: badrpc nodes; NSE: not_agreed nodes
+	    {DelNS, DelNNC, DelNSE} =
+	        lists:foldl(fun(Node, {NN_acc, NNC_acc, NSE_acc}) -> 
+                    case rpc:call(Node, s_group, delete_s_group_check, DelArgs) of
+                        {badrpc, _} ->
+                            {NN_acc, [Node | NNC_acc], NSE_acc};
+                        agreed ->
+                            {[Node | NN_acc], NNC_acc, NSE_acc};
+                        not_agreed ->
+                            {NN_acc, NNC_acc, [Node | NSE_acc]}
+                    end
+         	end, {[], [], []}, SGroupNodes--[node()]),
+            ?debug({"DelNS_DelNNC_DelNSE:",  {DelNS, DelNNC, DelNSE}}),
+
+	    %% Disconnect nodes
+	    case NewSGroupNames of
+	        [] ->
+		    ?debug(delete_s_group_1),
+		    disconnect_nodes(nodes(connected)),
+		    ?debug(delete_s_group_2);
+	    	    %spawn(?MODULE, connect_free_nodes, []);
+		_ ->
+		    ?debug(delete_s_group_3),
+		    disconnect_nodes(SGroupNodes),
+		    ?debug(delete_s_group_4)
+		    %spawn(?MODULE, sync, [])
+	    end,
+
+	    ?debug(delete_s_group_5),
+	    %% New parameter for s_group and free node
+	    NewS = S#state{sync_state = NewSyncState, 
+		           group_names = NewSGroupNames,
+                   	   nodes = NewNodes,
+		   	   no_contact = NewNoContact,
+		   	   sync_error = NewSyncError,
+                   	   own_grps = NewOwnSGroups,
+		   	   other_grps = NewOtherSGroups
+                   	   },
+	    ?debug(delete_s_group_6),
+    	    {reply, 'ok', NewS}
     end;
-
-handle_call({delete_s_group_check1, SGroupName}, _From, S) ->
-    %%?debug({delete_s_group_check1, SGroupName}),
-    global:delete_s_group(SGroupName),
-    NewConf = dlt_from_s_group_tuples(SGroupName),
-    application:set_env(kernel, s_groups, NewConf),
-    SGroupNodes = case lists:keyfind(SGroupName, 1, S#state.own_grps) of 
-                     {_, Ns}-> Ns;
-                     false -> []  %% this should not happen.
-                 end,
-    OtherSGroupNodes = lists:usort(lists:append(
-                           [Ns || {G, Ns} <- S#state.own_grps, G /= SGroupName])),
-    NewS = S#state{sync_state = if length(S#state.group_names) == 1 -> no_conf;
-                                   true -> synced
-                                end, 
-                   group_names = S#state.group_names -- [SGroupName],
-                   nodes = S#state.nodes -- (SGroupNodes -- OtherSGroupNodes),
-                   sync_error = S#state.sync_error -- SGroupNodes, 
-                   no_contact = S#state.no_contact -- SGroupNodes,
-                   own_grps = S#state.own_grps -- [{SGroupName, SGroupNodes}] 
-                  },
-    {reply, ok, NewS};
-
 
 handle_call({delete_s_group_check, InitNode, SGroupName, NewSGroupNodes}, _From, S) ->
     ?debug({delete_s_group_check, InitNode, SGroupName, NewSGroupNodes}),
-    {SGroupName, SGroupNodes} = lists:keyfind(SGroupName, 1, S#state.own_grps),
+    SGroupNodes = case lists:keyfind(SGroupName, 1, S#state.own_grps) of
+                      false -> [];
+		      {SGroupName, SGNodes} -> SGNodes
+                  end,
     NewSGroupNames = lists:delete(SGroupName, S#state.group_names),
-    case NewSGroupNames of
-        [] ->
-	    %% The node becomes free
-	    NewConf = [],
-	    NewSyncState = no_conf,
-	    NewNodes = [],
-	    NewNoContact = [],
-	    NewSyncError = [],
-	    NewOwnSGroups = [],
-	    NewOtherSGroups = [];
-	_ ->
-	    %% The node belongs to other s_groups
-	    NewConf = dlt_from_s_group_tuples(SGroupName),
-	    NewSyncState = synced,
-	    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_grps),
-	    NewOtherSGroups = S#state.other_grps,
-	    NewNodes = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
-	    NewNoContact = [Nds || Nds1 <- NewNodes, Nds <- S#state.no_contact, Nds1==Nds],
-	    NewSyncError = [Nds || Nds1 <- NewNodes, Nds <- S#state.sync_error, Nds1==Nds]
-    end,
 
     %% Send s_group info update to the own global_name_server
     global_name_server ! {own_s_group_delete, SGroupName},
     ?debug({send_own_s_group_delete_SGroupName, SGroupName}),
 
-    %% Disconnect from SGroupNodes
     case NewSGroupNames of
         [] ->
-	    ?debug({"delete_s_group_check1"}),
-	    application:unset_env(kernel, s_groups),
-	    NodesToDisconnect = nodes(connected) -- [InitNode],
-	    ?debug({"delete_s_group_check1_NodesToDisconnect", NodesToDisconnect}),
-	    disconnect_nodes(NodesToDisconnect);
+	    %% The node becomes free
+    	    ?debug({"delete_s_group_check1"}),
+    	    application:unset_env(kernel, s_groups),
+
+	    NewSyncState = no_conf,
+	    NewNodes = [],
+	    NewNoContact = [],
+	    NewSyncError = [],
+	    NewOwnSGroups = [],
+	    NewOtherSGroups = [],
+
+	    disconnect_nodes(nodes(connected)--[InitNode]),
+	    spawn(?MODULE, connect_free_nodes, []);
 	_ ->
+	    %% The node belongs to other s_groups
 	    ?debug({"delete_s_group_check2"}),
+	    NewConf = dlt_from_s_group_tuples(SGroupName),
 	    application:set_env(kernel, s_groups, NewConf),
-	    NodesToDisconnect = SGroupNodes -- [InitNode],
-	    ?debug({"delete_s_group_check2_NodesToDisconnect", NodesToDisconnect}),
-	    disconnect_nodes(NodesToDisconnect),
+
+	    NewSyncState = synced,
+	    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_grps),
+	    NewOtherSGroups = S#state.other_grps,
+	    NewNodes = lists:usort(lists:append([Nds || {_, Nds} <- NewOwnSGroups])),
+	    NewNoContact = [Nds || Nds1 <- NewNodes, Nds <- S#state.no_contact, Nds1==Nds],
+	    NewSyncError = [Nds || Nds1 <- NewNodes, Nds <- S#state.sync_error, Nds1==Nds],
+
+	    disconnect_nodes(SGroupNodes--[InitNode]),
 	    spawn(?MODULE, sync, [])
     end,
-   
+
     NewS = S#state{sync_state = NewSyncState, 
 		   group_names = NewSGroupNames,
                    nodes = NewNodes,
@@ -1034,8 +1040,6 @@ handle_call({add_nodes, SGroupName, Nodes}, _From, S) ->
             case Nodes -- SGroupNodes of 
                 [] -> {reply, {ok, SGroupName, Nodes}, S};
                 NewNodes0 ->
-                    ok = global:set_s_group_name(SGroupName),
-
 		    ?debug({"add_nodes_Nodes", Nodes}),
 		    ?debug({"add_nodes_NewNodes0", NewNodes0}),
 		    NodesToDisConnect = Nodes -- (Nodes -- nodes(connected)),
@@ -1071,7 +1075,6 @@ handle_call({add_nodes, SGroupName, Nodes}, _From, S) ->
                     %% Send s_group info update to the own global_name_server
 	    	    global_name_server ! {own_s_group_update, SGroupName, NewSGroupNodes},
 
-		    ok = global:reset_s_group_name(),
 		    ?debug({"s_group_handle_add_nodes_S", S}),
                     NewS = S#state{sync_state = synced, 
 		                   %%group_names = S#state.group_names,
@@ -1155,7 +1158,7 @@ handle_call({remove_nodes, SGroupName, NodesToRmv0}, _From, S) ->
     	    NodesToRmv = [Nd || Nd <- SGroupNodes, Nd0 <- NodesToRmv0, Nd==Nd0],
 	    case NodesToRmv of
 	        [] ->
-		    {reply, {'ok', []}, S};
+		    {reply, 'ok', S};
 		_ ->
 		    NewSGroupNodes = SGroupNodes -- NodesToRmv,
 		    case NewSGroupNodes of
@@ -1212,11 +1215,11 @@ handle_call({remove_nodes, SGroupName, NodesToRmv0}, _From, S) ->
 					                               {SGroupName, NewSGroupNodes}),
                                            %%other_grps = S#state.other_grps,
                    	    		   nodes = S#state.nodes--NodesToRmv
-                   	    		   %%no_contact = lists:usort(NNC ++ S#state.no_contact -- NS),
-                   	    		   %%sync_error = lists:usort(NSE ++ S#state.sync_error -- NS)
+                   	    		   %%no_contact = S#state.no_contact,
+                   	    		   %%sync_error = S#state.sync_error
 		   	    		   %%monitor = S#state.monitor,
                    	    		   },
-    			    {reply, {ok, NodesToRmv}, NewS}
+    			    {reply, 'ok', NewS}
 		    end
 	    end
     end;
@@ -1781,8 +1784,8 @@ config_scan(MyNode, [GrpTuple|NodeGrps], MyOwnNodeGrps, OtherNodeGrps) ->
 
 grp_tuple({Name, Nodes}) ->
     {Name, normal, Nodes};
-grp_tuple({Name, hidden, Nodes}) ->
-    {Name, hidden, Nodes};
+%grp_tuple({Name, hidden, Nodes}) ->
+%    {Name, hidden, Nodes};
 grp_tuple({Name, normal, Nodes}) ->
     {Name, normal, Nodes}.
 
@@ -2150,7 +2153,6 @@ disconnect_nodes(DisconnectNodes) ->
 		  end,
 		  DisconnectNodes).
 
-
 %%%====================================================================================
 %%% Disconnect nodes not belonging to own s_groups
 %%%====================================================================================
@@ -2208,9 +2210,6 @@ get_own_s_groups_with_nodes() ->
 %%%====================================================================================
 %%% -hidden command line argument
 %%%====================================================================================
-%publish_arg() ->
-%     normal.
-
 publish_arg() ->
     case init:get_argument(hidden) of
 	{ok,[[]]} ->
@@ -2250,7 +2249,6 @@ publish_on_nodes(normal, no_group) ->
 publish_on_nodes(hidden, no_group) ->
     [];
 publish_on_nodes(normal, {normal, Nodes}) ->
-%    all;
     Nodes;
 publish_on_nodes(hidden, {_, Nodes}) ->
     Nodes;
@@ -2353,16 +2351,38 @@ s_group_conflict(Nodes, CCArgs) ->
 connect_free_nodes() ->
     case is_free_normal() of
 	yes ->
-	    NodesToReConnect = nodes(connected),
-	    lists:foreach(fun(Node) ->
+	    ConnectedNodes = lists:usort(nodes(connected)--[node()]),
+	    ?debug({"connect_free_nodes_ConnectedNodes", ConnectedNodes}),
+	    FreeNodes = 
+	        lists:foldl(fun(Node, FreeNodes_acc) ->
 	    	          case rpc:call(Node, s_group, is_free_normal, []) of
                                yes ->
-                                   {s_group, Node} ! {nodeup, node()},
-			  	   global:node_connected(Node);
+			           [Node | FreeNodes_acc];
                                _ ->
-                                   ok
+                                   FreeNodes_acc
                           end
-	    end, NodesToReConnect);
+	        end, [], ConnectedNodes),
+	    lists:foreach(fun(Node) ->
+                  {s_group, Node} ! {nodeup, node()},
+		  global:node_connected(Node)
+            end, FreeNodes);
 	_ ->
 	    ok
+    end.
+
+is_free_normal() ->
+    case application:get_env(kernel, s_groups) of
+        undefined ->
+	    %% The node is free
+	    case publish_arg() of
+	        normal ->
+		    %% The node is free normal
+		    yes;
+		_ ->
+		    %% The node is free hidden
+		    no
+	    end;	
+	_ ->
+	    %% The node is an s_group node
+	    no
     end.
