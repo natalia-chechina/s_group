@@ -39,11 +39,15 @@
 	 own_s_groups/0,	 
 	 sync/0, sync/1]).
 
+-export([unregister_foreign_names/0,
+	 add_attribute/1, remove_attribute/1, registered_attributes/0]).
+
 -export([set_lock/1, set_lock/2, set_lock/3, del_lock/1, del_lock/2,
 	 trans/2, trans/3, trans/4,
 	 random_exit_name/3, random_notify_name/3,
 	 notify_all_name/3,
-	 node_disconnected/1, node_connected/1]).
+	 node_disconnected/1, node_connected/1,
+	 get_known_s_group/1]).
 
 %% Internal exports
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -51,7 +55,7 @@
 
 -export([info/0]).
 
--compile(export_all).
+%-compile(export_all).
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
@@ -127,14 +131,15 @@
 -type group_name()  :: atom().
 -type group_tuple() :: {GroupName :: group_name(), [node()]}.
                  
--record(state, {connect_all        :: boolean(),
-		own_s_groups = []  :: [group_tuple()],
-		known = []         :: [group_tuple()],
-		synced = []        :: [group_tuple()],
-		resolvers = [], 
-		syncers = []       :: [pid()],
-		node_name = node() :: node(),
-		s_group = no_group :: group_name(),
+-record(state, {connect_all	      :: boolean(),
+		own_s_groups = []     :: [group_tuple()],
+		known = []            :: [group_tuple()],
+		synced = []           :: [group_tuple()],
+		resolvers = [],
+		syncers = []	      :: [pid()],
+		node_name = node()    :: node(),
+		s_group = no_group    :: group_name(),
+		attributes = [],
 		the_locker,
 		the_registrar,
 		trace,
@@ -194,7 +199,7 @@ stop() ->
 -spec sync() -> 'ok' | {'error', Reason :: term()}.
 sync() ->
     ?debug({"global_sync"}),
-    case s_group:s_groups() of
+    case application:get_env(kernel, s_groups) of
      	  undefined ->
 	      case check_sync_nodes() of
 	      	{error, _} = Error ->
@@ -284,7 +289,7 @@ node_connected(Node) ->
       Pid :: pid().
 
 register_name(Name, Pid) when is_pid(Pid) ->
-     case s_group:s_groups() of
+     case application:get_env(kernel, s_groups) of
      	  undefined ->
 	  	register_name(Name, undefined, Pid, fun random_exit_name/3);
 	  _ ->
@@ -300,7 +305,7 @@ register_name(Name, Pid) when is_pid(Pid) ->
       Resolve :: method().
 
 register_name(Name, Pid, Resolve) when is_pid(Pid) ->
-     case s_group:s_groups() of
+     case application:get_env(kernel, s_groups) of
      	  undefined ->
 	        register_name(Name, undefined, Pid, Resolve);
           _ ->
@@ -384,7 +389,7 @@ unregister_name(Name, SGroupName) ->
       Name :: term(),
       Pid :: pid().
 re_register_name(Name, Pid) when is_pid(Pid) ->
-     case s_group:s_groups() of
+     case application:get_env(kernel, s_groups) of
      	  undefined ->
 	  	re_register_name(Name, undefined, Pid, fun random_exit_name/3);
 	  _ ->
@@ -396,7 +401,7 @@ re_register_name(Name, Pid) when is_pid(Pid) ->
       Pid :: pid(),
       Resolve :: method().
 re_register_name(Name, Pid, Method) when is_pid(Pid) ->
-     case s_group:s_groups() of
+     case application:get_env(kernel, s_groups) of
      	  undefined ->
 	  	re_register_name(Name, undefined, Pid, Method);
 	  _ ->
@@ -426,11 +431,11 @@ re_register_name(Name, SGroupName, Pid, Method) when is_pid(Pid) ->
 -spec registered_names() -> [Name] when
       Name :: term().
 registered_names() ->		%NC
-    case s_group:s_groups() of
-	 {_, _} ->
-	     registered_names(all_names);
+    case application:get_env(kernel, s_groups) of
     	 undefined ->
-	     registered_names(undefined)
+	     registered_names(undefined);
+	 _ ->
+	     registered_names(all_names)
     end.
 
 -spec registered_names(Flag) -> [Name] when	%NC
@@ -471,7 +476,7 @@ s_group_undefined_names([{_Name, _SGroupName} | Tail], Names) ->
 %% the fact that monitors do the job now.]
 %%-----------------------------------------------------------------
 register_name_external(Name, Pid) when is_pid(Pid) ->
-     case s_group:s_groups() of
+     case application:get_env(kernel, s_groups) of
      	  undefined ->
 	       register_name_external(Name, undefined, Pid, fun random_exit_name/3);
           _ ->
@@ -479,7 +484,7 @@ register_name_external(Name, Pid) when is_pid(Pid) ->
      end.
 
 register_name_external(Name, Pid, Method) when is_pid(Pid) ->
-     case s_group:s_groups() of
+     case application:get_env(kernel, s_groups) of
      	  undefined ->
 	       register_name_external(Name, undefined, Pid, Method);
           _ ->
@@ -599,11 +604,40 @@ trans(Id, Fun, Nodes, Retries) ->
 info() ->
     gen_server:call(global_name_server, info, infinity).
 
-get_s_group_name() ->
-    request(get_s_group_name).
-
 unregister_foreign_names() ->
     request({unregister_foreign_names}).
+
+%%-----------------------------------------------------------------
+%% Adding, removeing, and listing attributes
+%%-----------------------------------------------------------------
+-spec add_attribute(Args) -> {ok, Args} | {error, Reason} when
+      Args :: [term()],
+      Reason :: term().
+
+add_attribute(Args) ->
+    case is_list(Args) of
+        true ->
+	    request({add_attribute, Args});
+	_ ->
+	    {error, parameter_should_be_a_list}
+    end.
+
+-spec remove_attribute(Args) -> {ok, Args} | {error, Reason} when
+      Args :: [term()],
+      Reason :: term().
+
+remove_attribute(Args) ->
+    case is_list(Args) of
+        true ->
+	    request({remove_attribute, Args});
+	_ ->
+	    {error, parameter_should_be_a_list}
+    end.
+
+registered_attributes() ->
+    request(registered_attributes).
+
+%%-----------------------------------------------------------------
 
 request(Req) ->
     request(Req, infinity).
@@ -855,8 +889,16 @@ handle_call({unregister_foreign_names}, _From, S) ->
     NewS = unregister_foreign_names(S),
     {reply, ok, NewS};
 
-handle_call(get_s_group_name, _From, S) ->
-    {reply, S#state.s_group, S};
+handle_call({add_attribute, Args}, _From, S) ->
+    NewArgs = lists:usort(S#state.attributes++Args),
+    {reply, ok, S#state{attributes = NewArgs}};
+
+handle_call({remove_attribute, Args}, _From, S) ->
+    NewArgs = lists:usort(S#state.attributes--Args),
+    {reply, ok, S#state{attributes = NewArgs}};
+
+handle_call(registered_attributes, _From, S) ->
+    {reply, S#state.attributes, S};
 
 handle_call(Request, From, S) ->
     error_logger:warning_msg("The global_name_server "
@@ -1440,17 +1482,6 @@ replace_no_group(Group, S) ->
 	    				      {Group, SyncedNodes})}
     end.
 
-
-disconnect_synced_nodes([], _DisconNodes) ->
-    ok;
-disconnect_synced_nodes([Node | RemConNodes], DisconNodes) ->
-    case lists:member(Node, DisconNodes) of
-        true ->
-	     disconnect_synced_nodes(RemConNodes, DisconNodes);
-	false ->
-	     erlang:disconnect_node(Node),
-	     disconnect_synced_nodes(RemConNodes, [Node | DisconNodes])
-    end.
 
 %%========================================================================
 %%========================================================================

@@ -42,8 +42,8 @@
 	 add_nodes/2,
 	 info/0,
 	 delete_s_group/1, remove_nodes/2,
-
 	 choose_nodes/1,
+
  	 monitor_nodes/1]).
 
 -export([publish_on_nodes/0, 
@@ -52,7 +52,8 @@
 	 s_group_state/0,
 	 ng_pairs/1,
 	 new_s_group_check/4, s_group_conflict_check/1,
-	 delete_s_group_check/3, add_nodes_check/3, remove_nodes_check/3]).
+	 delete_s_group_check/3, add_nodes_check/3, remove_nodes_check/3,
+	 add_attribute/2, remove_attribute/2]).
 
 -export([force_nodedown/1, connect_free_nodes/0, is_free_normal/0]).
 
@@ -345,6 +346,23 @@ choose_nodes([], ListOfNodes) ->
 choose_nodes([Arg | Args], ListOfNodes) ->
     Nodes = request({choose_nodes, Arg}),
     choose_nodes(Args, [Nodes | ListOfNodes]).
+
+add_attribute(Nodes, Args) ->
+    case is_list(Nodes) andalso is_list(Args) of
+        true ->
+	    request({add_attribute, Nodes, Args});
+	_ ->
+	    {error, both_parameters_should_be_lists}
+    end.
+
+remove_attribute(Nodes0, Args) ->
+    Nodes = lists:usort(Nodes0),
+    case is_list(Nodes) andalso is_list(Args) of
+        true ->
+	    request({remove_attribute, Nodes, Args});
+	_ ->
+	    {error, both_parameters_should_be_lists}
+    end.
 
 %%s_groups_changed(NewPara) ->
 %%    request({s_groups_changed, NewPara}).
@@ -1263,7 +1281,7 @@ handle_call({remove_nodes_check, SGroupName, NewSGroupNodes, NodesToRmv}, _From,
     {reply, agreed, NewS};
 
 %%%======================================================================
-%%% Remove nodes from an s_group
+%%% Choose nodes that satisfy the given argument
 %%% -spec choose_nodes(Arg) -> [Node].
 %%%======================================================================
 handle_call({choose_nodes, Arg}, _From, S) ->
@@ -1276,6 +1294,22 @@ handle_call({choose_nodes, Arg}, _From, S) ->
 		    _ ->
 		        []
 	        end;
+	    {attributes, Atribs0} ->
+	        Atribs = lists:usort(Atribs0),
+	        AtribNodes = nodes(connected),
+    		NodeAtribs = lists:foldl(fun(Node, NN_cc) ->
+                          NAt = rpc:call(Node, global, registered_attributes, []),
+			  case is_list(NAt) of
+                              true ->
+                      	          [{Node, NAt} | NN_cc];
+                              _ ->
+                      	          NN_cc
+		          end
+                end, [], AtribNodes),
+		?debug({"choose_nodes_NodeAtribs", NodeAtribs}),
+		%% From NodeAtribs pick nodes that have all Atribs
+		OverlapAtribs = [{N, At--(At--Atribs)} || {N, At} <- NodeAtribs],
+		[N || {N, At} <- OverlapAtribs, At==Atribs];
 	    _ ->
 	        []
         end,
@@ -1287,6 +1321,33 @@ handle_call({s_group_state}, _From, S) ->
     OwnGrps = S#state.own_grps,
     {reply, {ok, NodeGrps, OwnGrps}, S};
 
+
+%%%======================================================================
+%%% add_attribute(Nodes, Args)
+%%% remove_attribute(Nodes, Args)
+%%% -spec add_attribute(Nodes, Args) -> ok | {error, Reason}
+%%%======================================================================
+handle_call({add_attribute, Nodes, Args}, _From, S) ->
+    NewNodes = lists:foldl(fun(Node, NN_cc) ->
+                          case rpc:call(Node, global, add_attribute, [Args]) of
+                              ok ->
+                      	          [Node | NN_cc];
+                              _ ->
+                      	          NN_cc
+		          end
+               end, [], Nodes),
+    {reply, lists:usort(NewNodes), S};
+
+handle_call({remove_attribute, Nodes, Args}, _From, S) ->
+    NewNodes = lists:foldl(fun(Node, NN_cc) ->
+                          case rpc:call(Node, global, remove_attribute, [Args]) of
+                              ok ->
+                      	          [Node | NN_cc];
+                              _ ->
+                      	          NN_cc
+		          end
+               end, [], Nodes),
+    {reply, lists:usort(NewNodes), S};
 
 %%%====================================================================================
 %%% Misceleaneous help function to read some variables
@@ -1336,9 +1397,6 @@ handle_call({whereis_name_test, _Name}, _From, S) ->
 handle_call(Call, _From, S) ->
      %%io:format("***** handle_call ~p~n",[Call]),
     {reply, {illegal_message, Call}, S}.
-
-
-
 
 
 %%%====================================================================================
