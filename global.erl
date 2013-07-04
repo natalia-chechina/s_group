@@ -98,9 +98,9 @@
 -define(vsn, 5).
 
 
-%%-define(debug(_), ok). 
+-define(debug(_), ok). 
 
--define(debug(Term), erlang:display(Term)).
+%%-define(debug(Term), erlang:display(Term)).
 
 
 %%-----------------------------------------------------------------
