@@ -47,7 +47,7 @@
 	 random_exit_name/3, random_notify_name/3,
 	 notify_all_name/3,
 	 node_disconnected/1, node_connected/1,
-	 get_known_s_group/1]).
+	 get_known_s_group/1, get_known/0]).
 
 %% Internal exports
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -844,8 +844,6 @@ handle_call({get_known_s_group, SGroupName}, _From, S) ->
         {SGroupName, Nodes} -> Nodes;
 	_ -> []
     end,
-    ?debug({get_known_S, S}),
-    ?debug({get_known_s_group_Reply, Reply}),
     {reply, Reply, S};
 
 handle_call(own_s_groups, _From, S) ->

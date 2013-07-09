@@ -334,7 +334,9 @@ delete_s_group_check(InitNode, SGroupName, NewSGroupNodes) ->
 s_group_state() ->
     request({s_group_state}).
 
-choose_nodes(Args) ->
+choose_nodes(Args0) ->
+    Args = combine_attribute_args(Args0, [], []),
+    %%?debug({"choose_nodes_Args", Args}),
     ListOfNodes = choose_nodes(Args, []),
     overlap_nodes(ListOfNodes, []).
 
@@ -343,6 +345,16 @@ choose_nodes([], ListOfNodes) ->
 choose_nodes([Arg | Args], ListOfNodes) ->
     Nodes = request({choose_nodes, Arg}),
     choose_nodes(Args, [Nodes | ListOfNodes]).
+
+combine_attribute_args([], Attribs, RemArgs) ->
+    [{attributes, Attribs}] ++ RemArgs;
+combine_attribute_args([Arg | Args0], Attribs, RemArgs) ->
+    case Arg of
+        {attribute, Attrib} ->
+	    combine_attribute_args(Args0, [Attrib | Attribs], RemArgs);
+	_ ->
+	    combine_attribute_args(Args0, Attribs, [Arg | RemArgs])
+    end.
 
 add_attribute(Nodes, Args) ->
     case is_list(Nodes) andalso is_list(Args) of
@@ -596,7 +608,7 @@ handle_call({monitor_nodes, Flag}, {Pid, _}, StateIn) ->
 handle_call({own_nodes}, _From, S) ->
     Nodes = case S#state.sync_state of
 		no_conf ->
-		    [node() | nodes(connected)];
+		    lists:usort([node() | global:get_known()]);
 		synced ->
 		    get_own_nodes()
 	    end,
@@ -1295,10 +1307,10 @@ handle_call({choose_nodes, Arg}, _From, S) ->
 		    _ ->
 		        []
 	        end;
-	    {attributes, Atribs0} ->
-	        Atribs = lists:usort(Atribs0),
-	        AtribNodes = nodes(connected),
-    		NodeAtribs = lists:foldl(fun(Node, NN_cc) ->
+	    {attributes, Attribs0} ->
+	        Attribs = lists:usort(Attribs0),
+	        AttribNodes = nodes(connected),
+    		NodeAttribs = lists:foldl(fun(Node, NN_cc) ->
                           NAt = rpc:call(Node, global, registered_attributes, []),
 			  case is_list(NAt) of
                               true ->
@@ -1306,11 +1318,11 @@ handle_call({choose_nodes, Arg}, _From, S) ->
                               _ ->
                       	          NN_cc
 		          end
-                end, [], AtribNodes),
-		?debug({"choose_nodes_NodeAtribs", NodeAtribs}),
-		%% From NodeAtribs pick only nodes that have all Atribs
-		OverlapAtribs = [{N, At--(At--Atribs)} || {N, At} <- NodeAtribs],
-		[N || {N, At} <- OverlapAtribs, At==Atribs];
+                end, [], AttribNodes),
+		%%?debug({"choose_nodes_NodeAttribs", NodeAttribs}),
+		%% From NodeAttribs pick only nodes that have all Attribs
+		OverlapAttribs = [{N, At--(At--Attribs)} || {N, At} <- NodeAttribs],
+		[N || {N, At} <- OverlapAttribs, At==Attribs];
 	    _ ->
 	        []
         end,
@@ -2350,7 +2362,7 @@ is_free_normal() ->
     end.
 
 overlap_nodes([], OverlapNodes) ->
-    OverlapNodes;
+    lists:usort(OverlapNodes);
 overlap_nodes([Nodes | ListOfNodes], OverlapNodes) ->
     NewOverlapNodes = case OverlapNodes of
         	          [] ->
