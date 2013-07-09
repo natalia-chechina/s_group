@@ -155,71 +155,72 @@ own_s_groups() ->
 -type name()  :: atom().
 -type where() :: {'node', node()} | {'group', group_name()}.
 
--spec registered_names(Where) -> Names when
+-spec registered_names(Where) -> [{SGroupName, Name}] when
       Where :: where(),
-      Names :: [Name :: name()].
+      SGroupName :: group_name(),
+      Name :: name().
 registered_names(Arg) ->
     request({registered_names, Arg}).
 
--spec send(Name, SGroupName, Msg) -> Pid | {badarg, {Name, SGroupName, Msg}} when
-      Name :: name(),
+-spec send(SGroupName, Name, Msg) -> Pid | {badarg, {SGroupName, Name, Msg}} when
       SGroupName :: group_name(),
+      Name :: name(),
       Msg :: term(),
       Pid :: pid().
-send(Name, SGroupName, Msg) ->
-    request({send, Name, SGroupName, Msg}).
+send(SGroupName, Name, Msg) ->
+    request({send, SGroupName, Name, Msg}).
 
--spec send(Node, Name, SGroupName, Msg) -> Pid | {badarg, {Name, SGroupName, Msg}} when
+-spec send(Node, SGroupName, Name, Msg) -> Pid | {badarg, {SGroupName, Name, Msg}} when
       Node :: node(),
-      Name :: name(),
       SGroupName :: group_name(),
+      Name :: name(),
       Msg :: term(),
       Pid :: pid().
-send(Node, Name, SGroupName, Msg) ->
-    request({send, Node, Name, SGroupName, Msg}).
+send(Node, SGroupName, Name, Msg) ->
+    request({send, Node, SGroupName, Name, Msg}).
 
--spec register_name(Name, SGroupName, Pid) -> 'yes' | 'no' when	%NC
-      Name :: term(),
+-spec register_name(SGroupName, Name, Pid) -> 'yes' | 'no' when
       SGroupName :: group_name(),
-      Pid :: pid().
-register_name(Name, SGroupName, Pid) when is_pid(Pid) ->
-    request({register_name, Name, SGroupName, Pid}).
-
--spec register_name_external(Name, SGroupName, Pid) -> 'yes' | 'no' when	%NC
       Name :: term(),
+      Pid :: pid().
+register_name(SGroupName, Name, Pid) when is_pid(Pid) ->
+    request({register_name, SGroupName, Name, Pid}).
+
+-spec register_name_external(SGroupName, Name, Pid) -> 'yes' | 'no' when
       SGroupName :: group_name(),
+      Name :: term(),
       Pid :: pid().
-register_name_external(Name, SGroupName, Pid) when is_pid(Pid) ->
-    request({register_name_external, Name, SGroupName, Pid}).
+register_name_external(SGroupName, Name, Pid) when is_pid(Pid) ->
+    request({register_name_external, SGroupName, Name, Pid}).
 
--spec unregister_name(Name, SGroupName) -> _ when
-      Name :: term(),
-      SGroupName :: group_name().
-unregister_name(Name, SGroupName) ->
-      request({unregister_name, Name, SGroupName}).
-
-unregister_name_external(Name, SGroupName) ->
-      request({unregister_name, Name, SGroupName}).
-
--spec re_register_name(Name, SGroupName, Pid) -> 'yes' | 'no' when
-      Name :: term(),
+-spec unregister_name(SGroupName, Name) -> _ when
       SGroupName :: group_name(),
+      Name :: term().
+unregister_name(SGroupName, Name) ->
+      request({unregister_name, SGroupName, Name}).
+
+unregister_name_external(SGroupName, Name) ->
+      request({unregister_name, SGroupName, Name}).
+
+-spec re_register_name(SGroupName, Name, Pid) -> 'yes' | 'no' when
+      SGroupName :: group_name(),
+      Name :: term(),
       Pid :: pid().
-re_register_name(Name, SGroupName, Pid) when is_pid(Pid) ->
-      request({re_register_name, Name, SGroupName, Pid}).
+re_register_name(SGroupName, Name, Pid) when is_pid(Pid) ->
+      request({re_register_name, SGroupName, Name, Pid}).
 
--spec whereis_name(Name, SGroupName) -> pid() | 'undefined' when
-      Name :: name(),
-      SGroupName :: group_name().
-whereis_name(Name, SGroupName) ->
-    request({whereis_name, Name, SGroupName}).
+-spec whereis_name(SGroupName, Name) -> pid() | 'undefined' when
+      SGroupName :: group_name(),
+      Name :: name().
+whereis_name(SGroupName, Name) ->
+    request({whereis_name, SGroupName, Name}).
 
--spec whereis_name(Node, Name, SGroupName) -> pid() | 'undefined' when
+-spec whereis_name(Node, SGroupName, Name) -> pid() | 'undefined' when
       Node :: node(),
-      Name :: name(),
-      SGroupName :: group_name().
-whereis_name(Node, Name, SGroupName) ->
-    request({whereis_name, Node, Name, SGroupName}).
+      SGroupName :: group_name(),
+      Name :: name().
+whereis_name(Node, SGroupName, Name) ->
+    request({whereis_name, Node, SGroupName, Name}).
 
 s_group_conflict_check(SGroupName) ->
     request({s_group_conflict_check, SGroupName}).
@@ -229,7 +230,6 @@ s_group_conflict_check(SGroupName) ->
       SGroupName :: group_name(),
       Nodes :: [Node :: node()],
       Reason :: term().
-
 new_s_group(SGroupName, Nodes0) ->
     Nodes = lists:usort(Nodes0),
     case Nodes of
@@ -258,7 +258,6 @@ new_s_group_check(Node, PubType, SGroupName, Nodes) ->
       SGroupName :: group_name(),
       Nodes :: [Node :: node()],
       Reason :: term().
-
 add_nodes(SGroupName, Nodes0) ->
     Nodes = lists:usort(Nodes0) -- [node()],
     case Nodes of
@@ -284,7 +283,6 @@ add_nodes_check(Node, PubType, {SGroupName, Nodes}) ->
       SGroupName :: group_name(),
       Nodes :: [Node :: node()],
       Reason :: term().
-
 remove_nodes(SGroupName, Nodes0) ->
     Nodes = lists:usort(Nodes0),
     case Nodes of
@@ -313,7 +311,6 @@ remove_nodes_check(SGroupName, NewSGroupNodes, NodesToRmv) ->
 -spec delete_s_group(SGroupName) -> 'ok' | {error, Reason} when
       SGroupName :: group_name(),
       Reason :: term().
-
 delete_s_group(SGroupName) ->
     case request({delete_s_group, SGroupName}) of
         ok ->
@@ -644,7 +641,7 @@ handle_call(own_s_groups, _From, S) ->
 handle_call({registered_names, {s_group, SGroupName}}, From, S) ->
     case lists:member(SGroupName, S#state.group_names) of 
         true ->
-	    Res = s_group_names(global:registered_names(all_names), [], SGroupName),
+	    Res = s_group_names(global:registered_names(all_names), SGroupName),
             {reply, Res, S};
         false ->		 
             case lists:keysearch(SGroupName, 1, S#state.other_grps) of
@@ -669,10 +666,9 @@ handle_call({registered_names, {node, Node}}, From, S) ->
     {noreply, S};
 
 
-
 %%%====================================================================================
-%%% send(Name, SGroupName, Msg) -> Pid | {badarg, {Name, SGroupName, Msg}}
-%%% send(Node, Name, SGroupName, Msg) -> Pid | {badarg, {Name, SGroupName, Msg}}
+%%% send(Name, SGroupName, Msg) -> Pid | {badarg, {SGroupName, Name, Msg}}
+%%% send(Node, SGroupName, Name, Msg) -> Pid | {badarg, {SGroupName, Name, Msg}}
 %%%
 %%% Send the Msg to the specified globally registered Name in own s_group,
 %%% in specified Node, or SGroupName.
@@ -680,12 +676,12 @@ handle_call({registered_names, {node, Node}}, From, S) ->
 %%% handle_cast(send_res)
 %%%====================================================================================
 %% Search in the whole known world, but check own node first.
-handle_call({send, Name, SGroupName, Msg}, From, S) -> %NC?
-    case global:whereis_name(Name, SGroupName) of
+handle_call({send, SGroupName, Name, Msg}, From, S) -> %NC?
+    case global:whereis_name(SGroupName, Name) of
 	undefined ->
-	    Pid = global_search:start(send, {any, S#state.other_grps, Name, SGroupName, Msg, From}),
+	    Pid = global_search:start(send, {any, S#state.other_grps, SGroupName, Name, Msg, From}),
 	    Wait = get(send),
-	    put(send, [{Pid, From, Name, SGroupName, Msg} | Wait]),
+	    put(send, [{Pid, From, SGroupName, Name, Msg} | Wait]),
 	    {noreply, S};
 	Found ->
 	    Found ! Msg,
@@ -693,57 +689,59 @@ handle_call({send, Name, SGroupName, Msg}, From, S) -> %NC?
     end;
 
 %% Search on the specified node.
-handle_call({send, Node, Name, SGroupName, Msg}, From, S) ->
-    Pid = global_search:start(send, {node, Node, Name, SGroupName, Msg, From}),
+handle_call({send, Node, SGroupName, Name, Msg}, From, S) ->
+    Pid = global_search:start(send, {node, Node, SGroupName, Name, Msg, From}),
     Wait = get(send),
-    put(send, [{Pid, From, Name, SGroupName, Msg} | Wait]),
+    put(send, [{Pid, From, SGroupName, Name, Msg} | Wait]),
     {noreply, S};
 
 
 %%%====================================================================================
-%%% register_name(Name, SGroupName, Pid) -> 'yes' | 'no'
-%%% register_name_external(Name, SGroupName, Pid) -> 'yes' | 'no'
-%%% unregister_name(Name, SGroupName) -> _
-%%% re_register_name(Name, SGroupName, Pid) -> 'yes' | 'no'
+%%% register_name(SGroupName, Name, Pid) -> 'yes' | 'no'
+%%% register_name_external(SGroupName, Name, Pid) -> 'yes' | 'no'
+%%% unregister_name(SGroupName, Name) -> _
+%%% re_register_name(SGroupName, Name, Pid) -> 'yes' | 'no'
 %%%
-handle_call({register_name, Name, SGroupName, Pid}, _From, S) ->
+handle_call({register_name, SGroupName, Name, Pid}, _From, S) ->
     case lists:member(SGroupName, S#state.group_names) of
         true ->
-            Res = global:register_name(Name, SGroupName, Pid, fun global:random_exit_name/3),
+            Res = global:register_name(SGroupName, Name, Pid, fun global:random_exit_name/3),
             {reply, Res, S};
         _ ->
             {reply, no, S}
     end;
 
-handle_call({register_name_external, Name, SGroupName, Pid}, _From, S) ->
+handle_call({register_name_external, SGroupName, Name, Pid}, _From, S) ->
     case lists:member(SGroupName, S#state.group_names) of
         true ->
-            Res = global:register_name_external(Name, SGroupName, Pid, fun global:random_exit_name/3),
+            Res = global:register_name_external(SGroupName, Name, Pid, fun global:random_exit_name/3),
             {reply, Res, S};
         _ ->
             {reply, no, S}
     end;
 
-handle_call({unregister_name, Name, SGroupName}, _From, S) ->
+handle_call({unregister_name, SGroupName, Name}, _From, S) ->
     case lists:member(SGroupName, S#state.group_names) of
         true ->
-            Res = global:unregister_name(Name, SGroupName),
+            Res = global:unregister_name(SGroupName, Name),
             {reply, Res, S};
         _ ->
             {reply, no, S}
     end;
 
-handle_call({re_register_name, Name, SGroupName, Pid}, _From, S) ->
+handle_call({re_register_name, SGroupName, Name, Pid}, _From, S) ->
     case lists:member(SGroupName, S#state.group_names) of
         true ->
-            Res = global:re_register_name(Name, SGroupName, Pid, fun global:random_exit_name/3),
+            Res = global:re_register_name(SGroupName, Name, Pid, fun global:random_exit_name/3),
             {reply, Res, S};
         _ ->
             {reply, no, S}
     end;
+
+
 %%%====================================================================================
-%%% whereis_name(Name, SGroupName) -> Pid | undefined
-%%% whereis_name(Node, Name, SGroupName) -> Pid | undefined
+%%% whereis_name(SGroupName, Name) -> Pid | undefined
+%%% whereis_name(Node, SGroupName, Name) -> Pid | undefined
 %%%
 %%% Get the Pid of a globally registered Name in own s_group,
 %%% in specified Node, or SGroupName.
@@ -751,23 +749,24 @@ handle_call({re_register_name, Name, SGroupName, Pid}, _From, S) ->
 %%% the thread is continued at handle_cast(find_name_res)
 %%%====================================================================================
 %% Search on the specified node.
-handle_call({whereis_name, Node, Name, SGroupName}, From, S) ->
-    Pid = global_search:start(whereis, {node, Node, Name, SGroupName, From}),
+handle_call({whereis_name, Node, SGroupName, Name}, From, S) ->
+    Pid = global_search:start(whereis, {node, Node, SGroupName, Name, From}),
     Wait = get(whereis_name),
     put(whereis_name, [{Pid, From} | Wait]),
     {noreply, S};
 
 %% Search in the whole known world, but check own node first.
-handle_call({whereis_name, Name, SGroupName}, From, S) ->
-    case global:whereis_name(Name, SGroupName) of
+handle_call({whereis_name, SGroupName, Name}, From, S) ->
+    case global:whereis_name(SGroupName, Name) of
 	undefined ->
-	    Pid = global_search:start(whereis, {any, S#state.other_grps, Name, SGroupName, From}),
+	    Pid = global_search:start(whereis, {any, S#state.other_grps, SGroupName, Name, From}),
 	    Wait = get(whereis_name),
 	    put(whereis_name, [{Pid, From} | Wait]),
 	    {noreply, S};
 	Found ->
 	    {reply, Found, S}
     end;
+
 
 %%%======================================================================
 %%% Check whether remote node already belongs to a new s_group
@@ -780,6 +779,7 @@ handle_call({s_group_conflict_check, SGroupName}, _From, S) ->
         false ->
     	     {reply, agreed, S}
     end;
+
 
 %%%======================================================================
 %%% Create a new s_group.
@@ -1280,6 +1280,7 @@ handle_call({remove_nodes_check, SGroupName, NewSGroupNodes, NodesToRmv}, _From,
                    },
     {reply, agreed, NewS};
 
+
 %%%======================================================================
 %%% Choose nodes that satisfy the given argument
 %%% -spec choose_nodes(Arg) -> [Node].
@@ -1307,7 +1308,7 @@ handle_call({choose_nodes, Arg}, _From, S) ->
 		          end
                 end, [], AtribNodes),
 		?debug({"choose_nodes_NodeAtribs", NodeAtribs}),
-		%% From NodeAtribs pick nodes that have all Atribs
+		%% From NodeAtribs pick only nodes that have all Atribs
 		OverlapAtribs = [{N, At--(At--Atribs)} || {N, At} <- NodeAtribs],
 		[N || {N, At} <- OverlapAtribs, At==Atribs];
 	    _ ->
@@ -1348,6 +1349,7 @@ handle_call({remove_attribute, Nodes, Args}, _From, S) ->
 		          end
                end, [], Nodes),
     {reply, lists:usort(NewNodes), S};
+
 
 %%%====================================================================================
 %%% Misceleaneous help function to read some variables
@@ -1410,13 +1412,13 @@ handle_cast({registered_names, User}, S) ->
     User ! {registered_names_res, Res},
     {noreply, S};
 
-handle_cast({registered_names_res, SGroupName, Result1, Pid, From}, S) ->
-    case SGroupName of
-    	 undefined ->
-	    Result = Result1;
-	 _ ->
-	    Result = s_group_names(Result1, [], SGroupName)
-    end,
+handle_cast({registered_names_res, SGroupName, Result0, Pid, From}, S) ->
+    Result = case SGroupName of
+    	         undefined ->
+	    	     Result0;
+	 	 _ ->
+	    	     s_group_names(Result0, SGroupName)
+             end,
     unlink(Pid),
     exit(Pid, normal),
     Wait = get(registered_names),
@@ -1427,15 +1429,15 @@ handle_cast({registered_names_res, SGroupName, Result1, Pid, From}, S) ->
 
 
 %%%====================================================================================
-%%% send(Name, SGroupName, Msg) -> Pid | {error, ErrorMessage}
-%%% send(Node, Name, SGroupName, Msg) -> Pid | {error, ErrorMessage}
+%%% send(SGroupName, Name, Msg) -> Pid | {error, Reason}
+%%% send(Node, SGroupName, Name, Msg) -> Pid | {error, Reason}
 %%%
 %%% The registered Name is found; send the message to it, kill the search process,
 %%% and return to the requesting process.
 %%%====================================================================================
-handle_cast({send_res, Result, Name, SGroupName, Msg, Pid, From}, S) ->	%NC
+handle_cast({send_res, Result, SGroupName, Name, Msg, Pid, From}, S) ->	%NC
     case Result of
-	{badarg,{Name, SGroupName, Msg}} ->
+	{badarg,{SGroupName, Name, Msg}} ->
 	    continue;
 	ToPid ->
 	    ToPid ! Msg
@@ -1443,11 +1445,10 @@ handle_cast({send_res, Result, Name, SGroupName, Msg, Pid, From}, S) ->	%NC
     unlink(Pid),
     exit(Pid, normal),
     Wait = get(send),
-    NewWait = lists:delete({Pid, From, Name, SGroupName, Msg},Wait),
+    NewWait = lists:delete({Pid, From, SGroupName, Name, Msg},Wait),
     put(send, NewWait),
     gen_server:reply(From, Result),
     {noreply, S};
-
 
 
 %%%====================================================================================
@@ -1458,13 +1459,15 @@ handle_cast({find_name, User, Name}, S) ->	%NC?
     User ! {find_name_res, Res},
     {noreply, S};
 
-handle_cast({find_name, User, Name, SGroupName}, S) ->	%NC
-    Res = global:whereis_name(Name, SGroupName),
+handle_cast({find_name, User, SGroupName, Name}, S) ->	%NC
+    Res = global:whereis_name(SGroupName, Name),
     User ! {find_name_res, Res},
     {noreply, S};
+
+
 %%%====================================================================================
-%%% whereis_name(Name, SGroupName) -> Pid | undefined
-%%% whereis_name(Node, Name, SGroupName) -> Pid | undefined
+%%% whereis_name(SGroupName, Name) -> Pid | undefined
+%%% whereis_name(Node, SGroupName, Name) -> Pid | undefined
 %%%
 %%% The registered Name is found; kill the search process
 %%% and return to the requesting process.
@@ -1574,10 +1577,8 @@ handle_cast({conf_check, Vsn, Node, From, sync, CmnGroups, PubType, CmnGroupNode
     {noreply, NS};
 
 handle_cast(_Cast, S) ->
-%    io:format("***** handle_cast ~p~n",[_Cast]),
     {noreply, S}.
     
-
 
 %%%====================================================================================
 %%% A node went down. If no global group configuration inform global;
@@ -1600,6 +1601,8 @@ handle_info({nodeup, Node}, S) ->
     %% io:format("~p>>>>> nodeup, Node ~p ~n",[node(), Node]),
     %%?debug({"NodeUp:",  node(), Node}),
     handle_node_up(Node, S);
+
+
 %%%====================================================================================
 %%% A node has crashed. 
 %%% nodedown must always be sent to global; this is a security measurement
@@ -1717,49 +1720,48 @@ handle_node_up(Node, S) ->
 	    end
     end.
 
-
+%%%====================================================================================
+%%% Extra functions
+%%%====================================================================================
 
 shared_s_groups_match(OwnSGroups, OthersSGroups) ->
-    OwnSGroupNames = [G||{G, _Nodes}<-OwnSGroups],
-    OthersSGroupNames = [G||{G, _Nodes}<-OthersSGroups],
+    OwnSGroupNames = [G || {G, _Nodes} <- OwnSGroups],
+    OthersSGroupNames = [G || {G, _Nodes} <- OthersSGroups],
     SharedSGroups = intersection(OwnSGroupNames, OthersSGroupNames),
     case SharedSGroups of 
         [] -> false;
         Gs ->
             Own =[{G, lists:sort(Nodes)}
-                  ||{G, Nodes}<-OwnSGroups, lists:member(G, Gs)],
+                  || {G, Nodes} <- OwnSGroups, lists:member(G, Gs)],
             Others= [{G, lists:sort(Nodes)}
-                     ||{G, Nodes}<-OthersSGroups, lists:member(G, Gs)],
+                     || {G, Nodes} <- OthersSGroups, lists:member(G, Gs)],
             lists:sort(Own) == lists:sort(Others)
     end.
+
 intersection(_, []) -> 
     [];
 intersection(L1, L2) ->
     L1 -- (L1 -- L2).
 
-
 terminate(_Reason, _S) ->
     ok.
     
-
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
-
-
-
 
 
 %%%====================================================================================
 %%% Check the global group configuration.
 %%%====================================================================================
-
-%% type spec added by HL.
--spec config_scan(NodeGrps::[group_tuple()])->
-                         {ok, OwnGrps::[{group_name(), [node()]}], 
-                          OtherGrps::[{group_name(), [node()]}]}
-                             |{error, any()}.
-
-%% Functionality rewritten by HL.
+-spec config_scan(NodeSGroups) -> {ok, OwnSGroups, OtherSGroups} |
+                                 {error, Reason} when
+    NodeSGroups :: [group_tuple()],
+    OwnSGroups :: [SGroup],
+    OtherSGroups :: [SGroup],
+    SGroup :: {SGroupName, Nodes},
+    SGroupName :: group_name(),
+    Nodes :: [node()],
+    Reason :: term().
 config_scan(NodeGrps) ->
     config_scan(NodeGrps, original).
 
@@ -1792,37 +1794,6 @@ grp_tuple({Name, Nodes}) ->
 %    {Name, hidden, Nodes};
 grp_tuple({Name, normal, Nodes}) ->
     {Name, normal, Nodes}.
-
-    
-%% config_scan(NodeGrps) ->
-%%     config_scan(NodeGrps, original).
-
-%% config_scan(NodeGrps, original) ->
-%%     case config_scan(NodeGrps, publish_type) of
-%% 	{DefGroupName, _, DefNodes, DefOther} ->
-%% 	    {DefGroupName, DefNodes, DefOther};
-%% 	Error ->
-%% 	    Error
-%%     end;
-%% config_scan(NodeGrps, publish_type) ->
-%%     config_scan(node(), normal, NodeGrps, no_name, [], []).
-
-%% config_scan(_MyNode, PubType, [], Own_name, OwnNodes, OtherNodeGrps) ->
-%%     {Own_name, PubType, lists:sort(OwnNodes), lists:reverse(OtherNodeGrps)};
-%% config_scan(MyNode, PubType, [GrpTuple|NodeGrps], Own_name, OwnNodes, OtherNodeGrps) ->
-%%     {Name, PubTypeGroup, Nodes} = grp_tuple(GrpTuple),
-%%     case lists:member(MyNode, Nodes) of
-%% 	true ->
-%% 	    case Own_name of
-%% 		no_name ->
-%% 		    config_scan(MyNode, PubTypeGroup, NodeGrps, Name, Nodes, OtherNodeGrps);
-%% 		_ ->
-%% 		    {error, {'node defined twice', {Own_name, Name}}}
-%% 	    end;
-%% 	false ->
-%% 	    config_scan(MyNode,PubType,NodeGrps,Own_name,OwnNodes,
-%% 			[{Name, Nodes}|OtherNodeGrps])
-%%     end.
 
     
 %%%====================================================================================
@@ -2035,10 +2006,8 @@ do_unlink(Pid, State) ->
 	true ->
 	    false;
 	_ ->
-%	    io:format("unlink(Pid) ~p~n",[Pid]),
 	    unlink(Pid)
     end.
-
 
 
 %%%====================================================================================
@@ -2079,15 +2048,10 @@ safesend_nc(Pid, {Msg, Node}) ->
     Pid ! {Msg, Node}.
 
 
-
-
-
-
 %%%====================================================================================
 %%% Check which user is associated to the crashed process.
 %%%====================================================================================
 check_exit(ExitPid, Reason) ->
-%    io:format("===EXIT===  ~p ~p ~n~p   ~n~p   ~n~p ~n~n",[ExitPid, Reason, get(registered_names), get(send), get(whereis_name)]),
     check_exit_reg(get(registered_names), ExitPid, Reason),
     check_exit_send(get(send), ExitPid, Reason),
     check_exit_where(get(whereis_name), ExitPid, Reason).
@@ -2130,7 +2094,6 @@ check_exit_where(Where, ExitPid, Reason) ->
 	false ->
 	    not_found_ignored
     end.
-
 
 
 %%%====================================================================================
@@ -2327,15 +2290,10 @@ rmv_nodes_from_s_group_tuples(SGroupName, NodesToRmv) ->
 
 
 %%%====================================================================================
-%%% Draft function for registered_names, {s_group, SGroupName}handle_call({registered_names, {s_group, SGroupName}}, From, S)
+%%% Draft function for registered_names
 %%%====================================================================================
-s_group_names([], Names, _SGroupName) ->
-    Names;
-s_group_names([{Name, SGroupName1} | Tail], Names, SGroupName) when SGroupName1 =:= SGroupName ->
-    s_group_names(Tail, [{Name, SGroupName} | Names], SGroupName);
-s_group_names([{_Name, _SGroupName1} | Tail], Names, SGroupName) ->
-    s_group_names(Tail, Names, SGroupName).
-
+s_group_names(NameTuples, SGroupName) ->
+    [{SGroupName, Name} || {G, Name} <- NameTuples, G==SGroupName].
 
 s_group_conflict(Nodes, CCArgs) ->
     ?debug({"CCArgs:",CCArgs}),
