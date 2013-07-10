@@ -36,7 +36,7 @@
 	 send/2,
 	 whereis_name/1, whereis_name/2,
 	 registered_names/0, registered_names/1,
-	 own_s_groups/0,	 
+	 own_s_groups/0, get_known/0,	 
 	 sync/0, sync/1]).
 
 -export([unregister_foreign_names/0,
@@ -47,7 +47,7 @@
 	 random_exit_name/3, random_notify_name/3,
 	 notify_all_name/3,
 	 node_disconnected/1, node_connected/1,
-	 get_known_s_group/1, get_known/0]).
+	 get_known_s_group/1]).
 
 %% Internal exports
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -844,6 +844,8 @@ handle_call({get_known_s_group, SGroupName}, _From, S) ->
         {SGroupName, Nodes} -> Nodes;
 	_ -> []
     end,
+    ?debug({get_known_S, S}),
+    ?debug({get_known_s_group_Reply, Reply}),
     {reply, Reply, S};
 
 handle_call(own_s_groups, _From, S) ->
@@ -1309,6 +1311,43 @@ handle_info({own_s_group_delete, SGroupName}, S) ->
     ?debug({"own_s_group_delete", SGroupName}),
     NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_s_groups),
     {noreply, S#state{own_s_groups = NewOwnSGroups}};
+
+handle_info({own_s_group_delete, SGroupName, KeepConnected}, S) ->
+    %% OwnSGroups::[{SGroupName, [Node]}]
+    ?debug({"own_s_group_delete", SGroupName, KeepConnected}),
+    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_s_groups),
+    NewKnown = case lists:keyfind(SGroupName, 1, S#state.known) of
+    		      false ->
+		          S#state.known;
+		      {SGroupName, NodesK} ->
+		          NewNodesK = NodesK -- KeepConnected,
+			  case NewNodesK of
+			      [] ->
+			          lists:keydelete(SGroupName, 1, S#state.known);
+			      _ ->
+			          lists:keyreplace(SGroupName, 1, S#state.known,
+				                   {SGroupName, NewNodesK})
+			  end
+    		  end,
+    NewSynced = case lists:keyfind(SGroupName, 1, S#state.synced) of
+    		      false ->
+		          S#state.synced;
+		      {SGroupName, NodesS} ->
+		          NewNodesS = NodesS -- KeepConnected,
+			  case NewNodesS of
+			      [] ->
+			          lists:keydelete(SGroupName, 1, S#state.synced);
+			      _ ->
+			          lists:keyreplace(SGroupName, 1, S#state.synced,
+				                   {SGroupName, NewNodesS})
+			  end
+    		  end,
+    spawn(?MODULE, unregister_foreign_names, []),
+    NewS = S#state{own_s_groups = NewOwnSGroups,
+                   known = NewKnown,
+		   synced = NewSynced
+		   },
+    {noreply, NewS};
 
 %% "High level trace". For troubleshooting only.
 handle_info(high_level_trace, S) ->
