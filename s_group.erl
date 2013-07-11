@@ -458,47 +458,55 @@ init([]) ->
 	    application:unset_env(kernel, s_groups),
 	    {ok, #state{publish_type = PT,
 			connect_all = Ca}};
-	{ok, NodeGrps} ->
-	    AllNodes = lists:append([Nds || {_G, _T, Nds} <- NodeGrps]),
-	    case lists:member(node(), AllNodes) of
-	        true ->
-                    case catch config_scan(NodeGrps, publish_type) of
-                        {error, _Error2} ->
-                    	    update_publish_nodes(PT),
-                    	    exit({error, {'invalid g_groups definition', NodeGrps}});
-                	{ok, DefOwnSGroupsT, DefOtherSGroupsT} ->
-                    	    DefOwnSGroupsT1 = [{GroupName,GroupNodes} ||
-                                               {GroupName, _PubType, GroupNodes}
-                                               <- DefOwnSGroupsT],
-                            {DefSGroupNamesT1, DefSGroupNodesT1} = lists:unzip(DefOwnSGroupsT1),
-                    	    DefSGroupNamesT = lists:usort(DefSGroupNamesT1),
-                    	    DefSGroupNodesT = lists:usort(lists:append(DefSGroupNodesT1)),
-                    	    update_publish_nodes(PT, {normal, DefSGroupNodesT}),
-                    	    %% First disconnect any nodes not belonging to our own group
-                    	    disconnect_nodes(nodes(connected) -- DefSGroupNodesT),
-                    	    lists:foreach(fun(Node) ->
-                                          erlang:monitor_node(Node, true)
-                                          end, DefSGroupNodesT),
-                            global_name_server ! {init_own_s_groups, DefOwnSGroupsT1},
-                    	    NewState = #state{sync_state = synced,
-				              group_names = DefSGroupNamesT,
-                                      	      own_grps = DefOwnSGroupsT1,
-                                      	      other_grps = DefOtherSGroupsT,
-                                      	      no_contact = lists:delete(node(), DefSGroupNodesT),
-				      	      publish_type = PT,
-		    	              	      group_publish_type = normal
-				      	      },
-                            %%?debug({"NewState", NewState}),
-                    	    {ok, NewState}
-                    end;
-	        _ ->
+	{ok, NodeGrps0} ->
+	    ?debug({"s_group_init_NodeGrps", NodeGrps0}),
+	    NodeGrps = update_conf(NodeGrps0),
+	    case NodeGrps of
+	        [] ->
 		    update_publish_nodes(PT),
 	    	    application:unset_env(kernel, s_groups),
 	    	    {ok, #state{publish_type = PT,
-			        connect_all = Ca}}
+			        connect_all = Ca}};
+		_ ->
+	    	    AllNodes = lists:append([Nds || {_G, _T, Nds} <- NodeGrps]),
+	    	    case lists:member(node(), AllNodes) of
+	                true ->
+                    	    case catch config_scan(NodeGrps, publish_type) of
+                                {error, _Error2} ->
+                    	    	    update_publish_nodes(PT),
+                    	    	    exit({error, {'invalid g_groups definition', NodeGrps}});
+                	        {ok, DefOwnSGroupsT, DefOtherSGroups} ->
+			            DefOwnSGroupsT1 = [{GroupName, GroupNodes} ||
+                                                       {GroupName, _PubType, GroupNodes}
+                                                       <- DefOwnSGroupsT],
+                                    {DefSGroupNamesT1, DefSGroupNodesT1} = lists:unzip(DefOwnSGroupsT1),
+                    	    	    DefSGroupNamesT = lists:usort(DefSGroupNamesT1),
+                    	    	    DefSGroupNodesT = lists:usort(lists:append(DefSGroupNodesT1)),
+                    	    	    update_publish_nodes(PT, {normal, DefSGroupNodesT}),
+                    	    	    %% First disconnect any nodes not belonging to our own group
+                    	    	    disconnect_nodes(nodes(connected) -- DefSGroupNodesT),
+                    	    	    lists:foreach(fun(Node) ->
+                                              erlang:monitor_node(Node, true)
+                                              end, DefSGroupNodesT),
+                                    global_name_server ! {init_own_s_groups, DefOwnSGroupsT1},
+                    	    	    NewState = #state{sync_state = synced,
+				                      group_names = DefSGroupNamesT,
+                                      	      	      own_grps = DefOwnSGroupsT1,
+                                      	      	      other_grps = DefOtherSGroups,
+                                      	      	      no_contact = lists:delete(node(), DefSGroupNodesT),
+				      	      	      publish_type = PT,
+		    	              	      	      group_publish_type = normal
+				      	      	      },
+                    	            {ok, NewState}
+                            end;
+	                _ ->
+		    	    update_publish_nodes(PT),
+	    	    	    application:unset_env(kernel, s_groups),
+	    	    	    {ok, #state{publish_type = PT,
+			                connect_all = Ca}}
+                    end
             end
     end.
-                        
 
 
 %%%====================================================================================
@@ -1816,7 +1824,6 @@ config_scan(MyNode, [GrpTuple|NodeGrps], MyOwnNodeGrps, OtherNodeGrps) ->
     {GrpName, PubTypeGroup, Nodes} = grp_tuple(GrpTuple),
     case lists:member(MyNode, Nodes) of
 	true ->
-            %% HL: is PubTypeGroup needed?
             config_scan(MyNode, NodeGrps, 
                         [{GrpName, PubTypeGroup,lists:sort(Nodes)}
                          |MyOwnNodeGrps], 
@@ -2404,3 +2411,22 @@ connect_s_group_nodes(SGroupNodes) ->
           {s_group, Node} ! {nodeup, node()}
 	  %global:node_connected(Node)
     end, SGroupNodes).
+
+%%%====================================================================================
+%%% Sort s_groups and nodes in s_group configuration, i.e.
+%%% * Remove duplicate s_groups
+%%% * Check that no s_group is called 'no_group' or 'undefined'
+%%% * Remove duplicate nodes in s_groups
+%%% * Merge s_groups with the same name
+%%% * Reset env_kernel
+%%%====================================================================================
+update_conf(SGroupsT) ->
+    SGroupNames = lists:usort([G || {G, _T, _Nds} <- SGroupsT, G/='no_group', G/='undefined']),
+    NewSGroupsT = [{G1, normal,
+    		    lists:usort(lists:append([Nds || {G, _T, Nds} <- SGroupsT, G==G1]))}
+                    || G1 <- SGroupNames],
+    application:set_env(kernel, s_groups, NewSGroupsT),
+    NewSGroupsT.
+
+
+
