@@ -1306,47 +1306,35 @@ handle_info({own_s_group_update, SGroupName, Nodes}, S) ->
                     end,
     {noreply, S#state{own_s_groups = NewOwnSGroups}};
 
-handle_info({own_s_group_delete, SGroupName}, S) ->
+handle_info({own_s_group_remove, SGroupName, Nodes, KeepConnected}, S) ->
     %% OwnSGroups::[{SGroupName, [Node]}]
-    ?debug({"own_s_group_delete", SGroupName}),
-    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_s_groups),
-    {noreply, S#state{own_s_groups = NewOwnSGroups}};
-
-handle_info({own_s_group_delete, SGroupName, KeepConnected}, S) ->
-    %% OwnSGroups::[{SGroupName, [Node]}]
-    ?debug({"own_s_group_delete", SGroupName, KeepConnected}),
-    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_s_groups),
-    NewKnown = case lists:keyfind(SGroupName, 1, S#state.known) of
-    		      false ->
-		          S#state.known;
-		      {SGroupName, NodesK} ->
-		          NewNodesK = NodesK -- KeepConnected,
-			  case NewNodesK of
-			      [] ->
-			          lists:keydelete(SGroupName, 1, S#state.known);
-			      _ ->
-			          lists:keyreplace(SGroupName, 1, S#state.known,
-				                   {SGroupName, NewNodesK})
-			  end
-    		  end,
-    NewSynced = case lists:keyfind(SGroupName, 1, S#state.synced) of
-    		      false ->
-		          S#state.synced;
-		      {SGroupName, NodesS} ->
-		          NewNodesS = NodesS -- KeepConnected,
-			  case NewNodesS of
-			      [] ->
-			          lists:keydelete(SGroupName, 1, S#state.synced);
-			      _ ->
-			          lists:keyreplace(SGroupName, 1, S#state.synced,
-				                   {SGroupName, NewNodesS})
-			  end
-    		  end,
-    spawn(?MODULE, unregister_foreign_names, []),
+    ?debug({"own_s_group_update", SGroupName, Nodes}),
+    OwnSGroups = S#state.own_s_groups,
+    NewOwnSGroups = lists:keyreplace(SGroupName, 1, OwnSGroups,
+		                     {SGroupName, Nodes}),
+    {SGroupName, NodesK} = lists:keyfind(SGroupName, 1, S#state.known),
+    NewKnown = lists:keyreplace(SGroupName, 1, S#state.known, 
+                                {SGroupName, NodesK--KeepConnected}),
+    {SGroupName, NodesS} = lists:keyfind(SGroupName, 1, S#state.synced),
+    NewSynced = lists:keyreplace(SGroupName, 1, S#state.synced, 
+                                 {SGroupName, NodesS--KeepConnected}),
     NewS = S#state{own_s_groups = NewOwnSGroups,
                    known = NewKnown,
 		   synced = NewSynced
 		   },
+    {noreply, NewS};
+
+handle_info({own_s_group_delete, SGroupName}, S) ->
+    %% OwnSGroups::[{SGroupName, [Node]}]
+    ?debug({"own_s_group_delete", SGroupName}),
+    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_s_groups),
+    NewKnown = lists:keydelete(SGroupName, 1, S#state.known),
+    NewSynced = lists:keydelete(SGroupName, 1, S#state.synced),
+    S1 = S#state{own_s_groups = NewOwnSGroups,
+                 known = NewKnown,
+		 synced = NewSynced
+		 },
+    NewS = unregister_foreign_names(S1),
     {noreply, NewS};
 
 %% "High level trace". For troubleshooting only.
@@ -2654,6 +2642,7 @@ cancel_locker(Node, S, Tag, ToBeRunOnLockerF) ->
             ?trace({{resolver, Resolver}}),
             exit(Resolver, kill),
             S1 = trace_message(S, {kill_resolver, Node}, [Tag, Resolver]),
+	    ?debug({"cancel_locker_S1", S1}),
 	    S1#state{resolvers = lists:keydelete(Node, 1, Resolvers)};
 	_ ->
 	    S
@@ -2803,9 +2792,14 @@ handle_nodedown(Node, S) ->
     NewS = cancel_locker(Node, S, get({sync_tag_my, Node})),
     NewS#state.the_locker ! {remove_from_known, Node},
     reset_node_state(Node),
-    NewS#state{known = [{G, lists:delete(Node, N)}||{G, N}<-Known, N/=[Node]],
-               synced = [{G, lists:delete(Node, N)}||{G, N}<-Syncs, N/=[Node]]}.
-
+    case application:get_env(kernel, s_groups) of
+        undefined ->
+	    NewS#state{known = [{G, lists:delete(Node, N)}||{G, N}<-Known, N/=[Node]],
+                       synced = [{G, lists:delete(Node, N)}||{G, N}<-Syncs, N/=[Node]]};
+	_ ->
+	    NewS#state{known = [{G, lists:delete(Node, N)} || {G, N} <- Known],
+                       synced = [{G, lists:delete(Node, N)} || {G, N} <- Syncs]}
+    end.
 
 get_names() ->
     ets:select(global_names, 
@@ -3350,10 +3344,6 @@ new_known([Group|SGroups], Known, AddedSGroupNodes) ->
                end,
     ?debug({"new_nodes_s_NewKnown", NewKnown}),
     new_known(SGroups, NewKnown, AddedSGroupNodes).
-
-
-
-
 
 
 

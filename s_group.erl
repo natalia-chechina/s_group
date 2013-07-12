@@ -280,12 +280,7 @@ remove_nodes(SGroupName, Nodes0) ->
 	        true ->
 		    {error, "cannot_remove_itself"};
 		false ->
-		    case remove_nodes_request(SGroupName, Nodes) of
-		        {ok, delete_s_group} ->
-			    delete_s_group(SGroupName);
-			Result ->
-			    Result
-		    end
+		    remove_nodes_request(SGroupName, Nodes)
 	    end
     end.
 
@@ -300,13 +295,12 @@ remove_nodes_check(SGroupName, NewSGroupNodes, NodesToRmv) ->
       Reason :: term().
 delete_s_group(SGroupName) ->
     case request({delete_s_group, SGroupName}) of
-        {ok, _SGroupNodes} ->
+        ok ->
 	    case application:get_env(kernel, s_groups) of
 	        undefined ->
-		    ?debug({"delete_s_group_x1"}),
 		    connect_free_nodes();
 		_ ->
-		    ?debug({"delete_s_group_x2"})
+		    ok
 	    end,
 	    ok;
 	Result ->
@@ -983,24 +977,22 @@ handle_call({delete_s_group, SGroupName}, _From, S) ->
 	    %% Disconnect nodes
 	    case NewSGroupNames of
 	        [] ->
-	    	    %% Send s_group info update to the own global_name_server
-	    	    global_name_server ! {own_s_group_delete, SGroupName},
-
-		    ?debug(delete_s_group_1),
 		    NodesToDisconnect = nodes(connected),
 		    disconnect_nodes(NodesToDisconnect),
 
-		    update_publish_nodes(S#state.publish_type);
+		    update_publish_nodes(S#state.publish_type),
+
+	    	    %% Send s_group info update to the own global_name_server
+	    	    global_name_server ! {own_s_group_delete, SGroupName};
 		_ ->
-		    ?debug(delete_s_group_3),
-		    KeepConnected = intersection(SGroupNodes, NewNodes) -- [node()],
-
  		    %% Send s_group info update to the own global_name_server
-    	    	    global_name_server ! {own_s_group_delete, SGroupName, KeepConnected},
-    	    	    ?debug({send_own_s_group_delete_SGroupName, SGroupName}),
+    	    	    global_name_server ! {own_s_group_delete, SGroupName},
 
-		    NodesToDisconnect = (SGroupNodes -- KeepConnected) -- [node()],
+		    NodesKeepConnected = intersection(SGroupNodes, NewNodes) -- [node()],
+		    NodesToDisconnect = (SGroupNodes -- NodesKeepConnected) -- [node()],
 		    disconnect_nodes(NodesToDisconnect),
+	    	    ?debug({"delete_s_group_check_NodesToDisconnect", NodesToDisconnect}),
+	    	    ?debug({"delete_s_group_check_NodesKeepConnected", NodesKeepConnected}),
 
 		    update_publish_nodes(S#state.publish_type, {normal, NewNodes})
 	    end,
@@ -1014,8 +1006,7 @@ handle_call({delete_s_group, SGroupName}, _From, S) ->
                    	   own_grps = NewOwnSGroups,
 		   	   other_grps = NewOtherSGroups
                    	   },
-	    ?debug(delete_s_group_6),
-    	    {reply, {ok, SGroupNodes}, NewS}
+    	    {reply, ok, NewS}
     end;
 
 handle_call({delete_s_group_check, InitNode, SGroupName, NewSGroupNodes}, _From, S) ->
@@ -1033,7 +1024,6 @@ handle_call({delete_s_group_check, InitNode, SGroupName, NewSGroupNodes}, _From,
 
     	    %% Send s_group info update to the own global_name_server
     	    global_name_server ! {own_s_group_delete, SGroupName},
-    	    ?debug({send_own_s_group_delete_SGroupName, SGroupName}),
 
 	    NewSyncState = no_conf,
 	    NewNodes = [],
@@ -1049,6 +1039,12 @@ handle_call({delete_s_group_check, InitNode, SGroupName, NewSGroupNodes}, _From,
 
 	    spawn(?MODULE, connect_free_nodes, []);
 	_ ->
+	    NewConf = dlt_from_s_group_tuples(SGroupName),
+	    application:set_env(kernel, s_groups, NewConf),
+
+	    %% Send s_group info update to the own global_name_server
+    	    global_name_server ! {own_s_group_delete, SGroupName},
+
 	    %% The node belongs to other s_groups
 	    NewSyncState = synced,
 	    NewOwnSGroups = lists:keydelete(SGroupName, 1, S#state.own_grps),
@@ -1057,22 +1053,13 @@ handle_call({delete_s_group_check, InitNode, SGroupName, NewSGroupNodes}, _From,
 	    NewNoContact = [Nds || Nds1 <- NewNodes, Nds <- S#state.no_contact, Nds1==Nds],
 	    NewSyncError = [Nds || Nds1 <- NewNodes, Nds <- S#state.sync_error, Nds1==Nds],
 
-	    KeepConnected = intersection(SGroupNodes, NewNodes),
-	    ?debug({"delete_s_group_check_KeepConnected", KeepConnected}),
-	    NodesToDisconnect = ((SGroupNodes -- KeepConnected) -- [InitNode]) -- [node()],
+	    NodesKeepConnected = intersection(SGroupNodes, NewNodes) -- [node()],
+	    NodesToDisconnect = (SGroupNodes -- NodesKeepConnected) -- [InitNode, node()],
 	    disconnect_nodes(NodesToDisconnect),
-
-    	    %% Send s_group info update to the own global_name_server
-    	    global_name_server ! {own_s_group_delete, SGroupName, KeepConnected},
-    	    ?debug({send_own_s_group_delete_SGroupName, SGroupName}),
-
-	    ?debug({"delete_s_group_check2"}),
-	    NewConf = dlt_from_s_group_tuples(SGroupName),
-	    application:set_env(kernel, s_groups, NewConf),
+    	    ?debug({"delete_s_group_check_NodesToDisconnect", NodesToDisconnect}),
+	    ?debug({"delete_s_group_check_NodesKeepConnected", NodesKeepConnected}),
 
 	    update_publish_nodes(S#state.publish_type, {normal, NewNodes})
-
-	    %%spawn(?MODULE, connect_s_group_nodes, [NodesToReConnect])
     end,
 
     NewS = S#state{sync_state = NewSyncState, 
@@ -1232,70 +1219,71 @@ handle_call({remove_nodes, SGroupName, NodesToRmv0}, _From, S) ->
 		    {reply, 'ok', S};
 		_ ->
 		    NewSGroupNodes = SGroupNodes -- NodesToRmv,
-		    case NewSGroupNodes of
-			[] ->
-			    {reply, {'ok', 'delete_s_group'}, S};
-			_ ->
-			    %% Remove NodesToRmv from s_group SGroupName
-    			    NewConf = rmv_nodes_from_s_group_tuples(SGroupName, NodesToRmv),
-    			    ?debug({"Newconf:", NewConf}),
-    			    application:set_env(kernel, s_groups, NewConf),
+		    %% Remove NodesToRmv from s_group SGroupName
+    		    NewConf = rmv_nodes_from_s_group_tuples(SGroupName, NodesToRmv),
+    		    ?debug({"Newconf:", NewConf}),
+    		    application:set_env(kernel, s_groups, NewConf),
 
-			    DelArgs = [node(), SGroupName, NewSGroupNodes],
-    			    ?debug({"DelArgs:", DelArgs}),
-    			    %% NS: agreed nodes; NNC: badrpc nodes; NSE: not_agreed nodes
-    			    {DelNS, DelNNC, DelNSE} =
-         		        lists:foldl(fun(Node, {NN_acc, NNC_acc, NSE_acc}) -> 
-                    		    case rpc:call(Node, s_group, delete_s_group_check, DelArgs) of
-                        	        {badrpc, _} ->
-                            		    {NN_acc, [Node | NNC_acc], NSE_acc};
-                        		agreed ->
-                            		    {[Node | NN_acc], NNC_acc, NSE_acc};
-                        		not_agreed ->
-                            		    {NN_acc, NNC_acc, [Node | NSE_acc]}
-                    		    end
-         			end, {[], [], []}, NodesToRmv),
-    			    ?debug({"DelNS_DelNNC_DelNSE:",  {DelNS, DelNNC, DelNSE}}),
+		    DelArgs = [node(), SGroupName, NewSGroupNodes],
+    		    ?debug({"DelArgs:", DelArgs}),
+    		    %% NS: agreed nodes; NNC: badrpc nodes; NSE: not_agreed nodes
+    		    {DelNS, DelNNC, DelNSE} =
+         	        lists:foldl(fun(Node, {NN_acc, NNC_acc, NSE_acc}) -> 
+                	    case rpc:call(Node, s_group, delete_s_group_check, DelArgs) of
+                       	        {badrpc, _} ->
+                       		    {NN_acc, [Node | NNC_acc], NSE_acc};
+                       		agreed ->
+                       		    {[Node | NN_acc], NNC_acc, NSE_acc};
+                       		not_agreed ->
+                       		    {NN_acc, NNC_acc, [Node | NSE_acc]}
+                	    end
+         		end, {[], [], []}, NodesToRmv),
+    		    ?debug({"DelNS_DelNNC_DelNSE:",  {DelNS, DelNNC, DelNSE}}),
 
-			    RmvArgs = [SGroupName, NewSGroupNodes, NodesToRmv],
-    			    ?debug({"RmvArgs:", RmvArgs}),
-    			    %% NS: agreed nodes; NNC: badrpc nodes; NSE: not_agreed nodes
-    			    {RmvNS, RmvNNC, RmvNSE} =
-         		        lists:foldl(fun(Node, {NN_acc, NNC_acc, NSE_acc}) -> 
-                    		    case rpc:call(Node, s_group, remove_nodes_check, RmvArgs) of
-                        	        {badrpc, _} ->
-                            		    {NN_acc, [Node | NNC_acc], NSE_acc};
-                        		agreed ->
-                            		    {[Node | NN_acc], NNC_acc, NSE_acc};
-                        		not_agreed ->
-                            		    {NN_acc, NNC_acc, [Node | NSE_acc]}
-                    		    end
-         			end, {[], [], []}, lists:delete(node(), NewSGroupNodes)),
-    			    ?debug({"RmvNS_RmvNNC_RmvNSE:",  {RmvNS, RmvNNC, RmvNSE}}),
-    			    ?debug({"remove_nodes_S#state.nodes_Nodes", S#state.nodes, NewSGroupNodes}),
+		    RmvArgs = [SGroupName, NewSGroupNodes, NodesToRmv],
+    		    ?debug({"RmvArgs:", RmvArgs}),
+    		    %% NS: agreed nodes; NNC: badrpc nodes; NSE: not_agreed nodes
+    		    {RmvNS, RmvNNC, RmvNSE} =
+         	        lists:foldl(fun(Node, {NN_acc, NNC_acc, NSE_acc}) -> 
+                	    case rpc:call(Node, s_group, remove_nodes_check, RmvArgs) of
+                       	        {badrpc, _} ->
+                       		    {NN_acc, [Node | NNC_acc], NSE_acc};
+                       		agreed ->
+                       		    {[Node | NN_acc], NNC_acc, NSE_acc};
+                       		not_agreed ->
+                       		    {NN_acc, NNC_acc, [Node | NSE_acc]}
+                	    end
+         		end, {[], [], []}, lists:delete(node(), NewSGroupNodes)),
+		    ?debug({"RmvNS_RmvNNC_RmvNSE:",  {RmvNS, RmvNNC, RmvNSE}}),
+		    ?debug({"remove_nodes_S#state.nodes_Nodes", S#state.nodes, NewSGroupNodes}),
 
-			    %% Send s_group info update to the own global_name_server
-    			    global_name_server ! {own_s_group_update, SGroupName, NewSGroupNodes},
-
-    			    %% Disconnect NodesToRmv
-			    disconnect_nodes(NodesToRmv),
-
-			    NewOwnSGroups = lists:keyreplace(SGroupName, 1, S#state.own_grps,
+		    NewOwnSGroups = lists:keyreplace(SGroupName, 1, S#state.own_grps,
 					                     {SGroupName, NewSGroupNodes}),
-			    NewOwnNodes = lists:usort(lists:append([Nds || {_G, Nds} <- NewOwnSGroups])),
-			    update_publish_nodes(S#state.publish_type, {normal, NewOwnNodes}),
+		    NewOwnNodes = lists:usort(lists:append([Nds || {_G, Nds} <- NewOwnSGroups])),
+		    NodesKeepConnected = intersection(NodesToRmv, NewOwnNodes) -- [node()],
+	    	    NodesToDisconnect = (NodesToRmv -- NodesKeepConnected) -- [node()],
+    	    	    ?debug({"delete_s_group_check_NodesToDisconnect", NodesToDisconnect}),
+	    	    ?debug({"delete_s_group_check_NodesKeepConnected", NodesKeepConnected}),
 
-    			    NewS = S#state{sync_state = synced, 
-		  	                   %%group_names = S#state.group_names,
-                   	    		   own_grps = NewOwnSGroups,
-                                           %%other_grps = S#state.other_grps,
-                   	    		   nodes = S#state.nodes--NodesToRmv
-                   	    		   %%no_contact = S#state.no_contact,
-                   	    		   %%sync_error = S#state.sync_error
-		   	    		   %%monitor = S#state.monitor,
-                   	    		   },
-    			    {reply, 'ok', NewS}
-		    end
+		    %% Send s_group info update to the own global_name_server
+		    global_name_server ! {own_s_group_remove, SGroupName,
+		                                              NewSGroupNodes, NodesKeepConnected},
+
+		    %% Disconnect NodesToRmv
+	    	    disconnect_nodes(NodesToDisconnect),
+
+		    update_publish_nodes(S#state.publish_type, {normal, NewOwnNodes}),
+
+		    NewS = S#state{sync_state = synced, 
+	  	                   %%group_names = S#state.group_names,
+               	    		   own_grps = NewOwnSGroups,
+                                   %%other_grps = S#state.other_grps,
+               	    		   nodes = S#state.nodes--NodesToRmv
+               	    		   %%no_contact = S#state.no_contact,
+               	    		   %%sync_error = S#state.sync_error
+	   	    		   %%monitor = S#state.monitor,
+               	    		   },
+		    {reply, 'ok', NewS}
 	    end
     end;
 
