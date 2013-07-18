@@ -22,8 +22,7 @@
 %% Global provides global registration of process names. The names are
 %% dynamically kept up to date with the entire network. Global can
 %% operate in two modes: in a fully connected network, or in a
-%% non-fully connected network. In the latter case, the name
-%% registration mechanism won't work. 
+%% non-fully connected network.
 %% As a separate service Global also provides global locks.
 
 %% External exports
@@ -59,7 +58,7 @@
 
 -include_lib("stdlib/include/ms_transform.hrl").
 
-%% Set this variable to 'allow' to allow several names of a process.
+%% Set this variable to 'allow' several names of a process.
 %% This is for backward compatibility only; the functionality is broken.
 -define(WARN_DUPLICATED_NAME, global_multi_name_action).
 
@@ -97,36 +96,44 @@
 
 -define(vsn, 5).
 
+-define(debug(_), ok). 
 
-%%-define(debug(_), ok). 
-
--define(debug(Term), erlang:display(Term)).
+%-define(debug(Term), erlang:display(Term)).
 
 
 %%-----------------------------------------------------------------
-%% connect_all = boolean() - true if we are supposed to set up a
-%%                           fully connected net
-%% known       = [Node] - all nodes known to us
-%% synced      = [Node] - all nodes that have the same names as us
-%% resolvers   = [{Node, MyTag, Resolver}] - 
-%%                        the tag separating different synch sessions, 
-%%                        and the pid of the name resolver process
+%% connect_all  = boolean() - true if we are supposed to set up a
+%%                            fully connected net
+%% own_s_groups = [{SGroupName, [Node]}] - all own s_groups and
+%%   		  			   their nodes
+%% known        = [{SGroupName, [Node]}] - all s\_groups and nodes
+%%   		  			   known to us
+%% synced       = [{SGroupName, [Node]}] - all nodes that have the
+%%   		  	      		   same names as us
+%% resolvers    = [{Node, MyTag, Resolver}] - the tag separating
+%% 		  	  	 	      different synch
+%%					      sessions, and the pid
+%%					      of the name resolver
+%%					      process
 %% syncers     = [pid()] - all current syncers processes
-%% node_name   = atom()  - our node name (can change if distribution
-%%                         is started/stopped dynamically)
+%% node_name   = atom() - our node name (can change if distribution
+%%                        is started/stopped dynamically)
 %%
 %% In addition to these, we keep info about messages arrived in
 %% the process dictionary:
-%% {pre_connect, Node} = {Vsn, InitMsg} - init_connect msgs that
+%% {pre_connect, Node}  = {Vsn, InitMsg} - init_connect msgs that
 %%                         arrived before nodeup
-%% {wait_lock, Node}   = {exchange, NameList, _NamelistExt} | lock_is_set
+%% {wait_lock, Node}    = {exchange, NameList, _NamelistExt} |
+%%   	       		  lock_is_set
 %%                        - see comment below (handle_cast)
-%% {save_ops, Node}    = {resolved, HisKnown, NamesExt, Res} | [operation()] 
-%%                        - save the ops between exchange and resolved
-%% {prot_vsn, Node}    = Vsn - the exchange protocol version (not used now)
-%% {sync_tag_my, Node} =  My tag, used at synchronization with Node
+%% {save_ops, Node}     = {resolved, HisKnown, NamesExt, Res} |
+%%   	      		  [operation()] 
+%%                       - save the ops between exchange and resolved
+%% {prot_vsn, Node}     = Vsn - the exchange protocol version
+%% 	      		        (not used now)
+%% {sync_tag_my, Node}  =  My tag, used at synchronization with Node
 %% {sync_tag_his, Node} = The Node's tag, used at synchronization
-%% {lock_id, Node} = The resource locking the partitions
+%% {lock_id, Node}      = The resource locking the partitions
 %%-----------------------------------------------------------------
 -type group_name()  :: atom().
 -type group_tuple() :: {GroupName :: group_name(), [node()]}.
@@ -151,10 +158,12 @@
 %%% (the first position is the key):
 %%%
 %%% global_locks (set): {ResourceId, LockRequesterId, [{Pid,RPid,ref()]}
-%%%   Pid is locking ResourceId, ref() is the monitor ref.
+%%%   Pid is locking ResourceId,
+%%%   ref() is the monitor ref.
 %%%   RPid =/= Pid if there is an extra process calling erlang:monitor().
-%%% global_names (set):  {{SGroupName, Name}, Pid, Method, RPid, ref()}
-%%%   Registered names. ref() is the monitor ref.
+%%% global_names (set): {{SGroupName, Name}, Pid, Method, RPid, ref()}
+%%%   Registered names.
+%%%   ref() is the monitor ref.
 %%%   RPid =/= Pid if there is an extra process calling erlang:monitor().
 %%% global_names_ext (set): {{SGroupName, Name}, Pid, RegNode}
 %%%   External registered names (C-nodes).
@@ -162,9 +171,11 @@
 %%%    trying to connect to the other node.)
 %%% 
 %%% Helper tables:
-%%% global_pid_names (bag): {Pid, {SGroupName, Name}} | {ref(), {SGroupName, Name}}
+%%% global_pid_names (bag): {Pid, {SGroupName, Name}} |
+%%% 		     	    {ref(), {SGroupName, Name}}
 %%%   Name(s) registered for Pid.
-%%%   There is one {Pid, {SGroupName, Name}} and one {ref(), {SGroupName, Name}} for every Pid.
+%%%   There is one {Pid, {SGroupName, Name}} and one
+%%%                {ref(), {SGroupName, Name}} for every Pid.
 %%%   ref() is the same ref() as in global_names.
 %%% global_pid_ids (bag): {Pid, ResourceId} | {ref(), ResourceId}
 %%%   Resources locked by Pid.
@@ -237,7 +248,6 @@ send(Name, Msg) ->
       Name :: term(),
       Msg :: term(),
       Pid :: pid().
-
 send(SGroupName, Name, Msg) ->
     case whereis_name(SGroupName, Name) of
 	Pid when is_pid(Pid) ->
@@ -256,7 +266,6 @@ send(SGroupName, Name, Msg) ->
 -spec whereis_name(Name) -> Pid | 'undefined' when
       Name :: term(),
       Pid :: pid().
-
 whereis_name(Name) ->
     whereis_name(undefined, Name).
 
@@ -264,7 +273,6 @@ whereis_name(Name) ->
       SGroupName :: group_name(),
       Name :: term(),
       Pid :: pid().
-
 whereis_name(SGroupName, Name) ->
     where(SGroupName, Name).
 
@@ -274,63 +282,65 @@ node_disconnected(Node) ->
 node_connected(Node) ->
     global_name_server ! {nodeup, no_group, Node}.
 %%-----------------------------------------------------------------
-%% Method = function(Name, Pid1, Pid2) -> Pid | Pid2 | none
+%% Method = function({SGroupName, Name}, Pid1, Pid2) -> Pid | Pid2 | none
 %% Method is called if a name conflict is detected when two nodes
 %% are connecting to each other. It is supposed to return one of
 %% the Pids or 'none'. If a pid is returned, that pid is
-%% registered as Name on all nodes. If 'none' is returned, the
-%% Name is unregistered on all nodes. If anything else is returned,
-%% the Name is unregistered as well.
+%% registered as {SGroupName, Name} on all nodes. If 'none' is returned,
+%% the {SGroupName, Name} is unregistered on all nodes. If anything else
+%% is returned, the {SGroupName, Name} is unregistered as well.
 %% Method is called once at one of the nodes where the processes reside
 %% only. If different Methods are used for the same name, it is
 %% undefined which one of them is used.
 %% Method blocks the name registration, but does not affect global locking.
 %%-----------------------------------------------------------------
 
--spec register_name(Name, Pid) -> 'yes' | 'no' when
+-spec register_name(Name, Pid) -> 'yes' | {no, Reason} when
       Name :: term(),
-      Pid :: pid().
-
+      Pid :: pid(),
+      Reason :: term().
 register_name(Name, Pid) when is_pid(Pid) ->
      case application:get_env(kernel, s_groups) of
      	  undefined ->
 	  	register_name(undefined, Name, Pid, fun random_exit_name/3);
 	  _ ->
-		no
+		{no, the_node_is_not_free}
      end.
 
 -type method() :: fun((Name :: term(), Pid :: pid(), Pid2 :: pid()) ->
                              pid() | 'none').
 
--spec register_name(Name, Pid, Resolve) -> 'yes' | 'no' when
+-spec register_name(Name, Pid, Resolve) -> 'yes' | {no, Reason} when
       Name :: term(),
       Pid :: pid(),
-      Resolve :: method().
-
+      Resolve :: method(),
+      Reason :: term().
 register_name(Name, Pid, Resolve) when is_pid(Pid) ->
      case application:get_env(kernel, s_groups) of
      	  undefined ->
 	        register_name(undefined, Name, Pid, Resolve);
           _ ->
-		no
+		{no, the_node_is_not_free}
      end.
 
--spec register_name(SGroupName, Name, Pid, Resolve) -> 'yes' | 'no' when
+-spec register_name(SGroupName, Name, Pid, Resolve) -> 'yes'
+      				      	   	       | {no, Reason} when
       SGroupName :: group_name(),
       Name :: term(),
       Pid :: pid(),
-      Resolve :: method() | undefined.
-
+      Resolve :: method() | undefined,
+      Reason :: term().
 register_name(SGroupName, Name, Pid, Method) when is_pid(Pid) ->
     Fun = fun(Nodes) ->
-        case (where(SGroupName, Name) =:= undefined) andalso check_dupname(SGroupName, Name, Pid) of
+        case (where(SGroupName, Name) =:= undefined) andalso
+	      check_dupname(SGroupName, Name, Pid) of
             true ->
                 gen_server:multi_call(Nodes,
                                       global_name_server,
                                       {register, {SGroupName, Name}, Pid, Method}),
                 yes;
             _ ->
-                no
+                {no, name_or_pid_already_registered}
         end
     end,
     ?trace({register_name, self(), SGroupName, Name, Pid, Method}),
@@ -365,13 +375,8 @@ check_dupname(SGroupName, Name, Pid) ->
 
 -spec unregister_name(Name) -> _ when
       Name :: term().
-
 unregister_name(Name) ->
       unregister_name(undefined, Name).
-
-%-spec unregister_name(SGroupName, Name) -> _ when
-%      SGroupName :: group_name(),
-%      Name :: term().
 
 unregister_name(SGroupName, Name) ->
     case where(SGroupName, Name) of
@@ -388,37 +393,37 @@ unregister_name(SGroupName, Name) ->
             gen_server:call(global_name_server, {registrar, Fun, SGroupName}, infinity)
     end.
 
--spec re_register_name(Name, Pid) -> 'yes' | 'no'  when
+-spec re_register_name(Name, Pid) -> 'yes' | {no, Reason}  when
       Name :: term(),
-      Pid :: pid().
-
+      Pid :: pid(),
+      Reason :: term().
 re_register_name(Name, Pid) when is_pid(Pid) ->
      case application:get_env(kernel, s_groups) of
      	  undefined ->
 	  	re_register_name(undefined, Name, Pid, fun random_exit_name/3);
 	  _ ->
-		no
+		{no, the_node_is_not_free}
      end.
 
--spec re_register_name(Name, Pid, Resolve) -> 'yes' | 'no' when
+-spec re_register_name(Name, Pid, Resolve) -> 'yes' | {no, Reason} when
       Name :: term(),
       Pid :: pid(),
-      Resolve :: method().
-
+      Resolve :: method(),
+      Reason :: term().
 re_register_name(Name, Pid, Method) when is_pid(Pid) ->
      case application:get_env(kernel, s_groups) of
      	  undefined ->
 	  	re_register_name(undefined, Name, Pid, Method);
 	  _ ->
-		no
+		{no, the_node_is_not_free}
      end.
 
--spec re_register_name(SGroupName, Name, Pid, Resolve) -> 'yes' | 'no' when
+-spec re_register_name(SGroupName, Name, Pid, Resolve) -> 'yes' | {no, Reason} when
       SGroupName :: group_name(),
       Name :: term(),
       Pid :: pid(),
-      Resolve :: method().
-
+      Resolve :: method(),
+      Reason :: term().
 re_register_name(SGroupName, Name, Pid, Method) when is_pid(Pid) ->
     Fun = fun(Nodes) ->
         case check_dupname(SGroupName, Name, Pid) of
@@ -428,7 +433,7 @@ re_register_name(SGroupName, Name, Pid, Method) when is_pid(Pid) ->
 					{register, {SGroupName, Name}, Pid, Method}),
 		  yes;
 	    _ ->
-	          no
+	          {no, pid_is_already_registered}
 	end
     end,
     ?trace({re_register_name, self(), SGroupName, Name, Pid, Method}),
@@ -436,8 +441,7 @@ re_register_name(SGroupName, Name, Pid, Method) when is_pid(Pid) ->
 
 -spec registered_names() -> [Name] when
       Name :: term().
-
-registered_names() ->		%NC
+registered_names() ->
     case application:get_env(kernel, s_groups) of
     	 undefined ->
 	     registered_names(undefined);
@@ -445,10 +449,9 @@ registered_names() ->		%NC
 	     registered_names(all_names)
     end.
 
--spec registered_names(Flag) -> [Name] when	%NC
+-spec registered_names(Flag) -> [Name] when
       Flag :: term(),
       Name :: term().
-
 registered_names(Flag) ->
     MS = ets:fun2ms(fun({{SGroupName, Name},_Pid,_M,_RP,_R}) -> {SGroupName, Name} end),
     NamesList = ets:select(global_names, MS),
@@ -481,7 +484,7 @@ register_name_external(Name, Pid) when is_pid(Pid) ->
      	  undefined ->
 	       register_name_external(undefined, Name, Pid, fun random_exit_name/3);
           _ ->
-		no
+	       {no, the_node_is_not_free}
      end.
 
 register_name_external(Name, Pid, Method) when is_pid(Pid) ->
@@ -489,7 +492,7 @@ register_name_external(Name, Pid, Method) when is_pid(Pid) ->
      	  undefined ->
 	       register_name_external(undefined, Name, Pid, Method);
           _ ->
-		no
+	       {no, the_node_is_not_free}
      end.
     
 
@@ -502,7 +505,8 @@ register_name_external(SGroupName, Name, Pid, Method) when is_pid(Pid) ->
 						{register_ext, SGroupName, Name, Pid, 
                                                  Method, node()}),
 			  yes;
-		      _Pid -> no
+		      _Pid ->
+		          {no, the_name_is_already_used}
 		  end
 	  end,
     ?trace({register_name_external, self(), SGroupName, Name, Pid, Method}),
@@ -589,7 +593,6 @@ trans(Id, Fun, Nodes) -> trans(Id, Fun, Nodes, infinity).
       Nodes :: [node()],
       Retries :: retries(),
       Res :: term().
-
 trans(Id, Fun, Nodes, Retries) ->
     case set_lock(Id, Nodes, Retries) of
 	true ->
@@ -614,7 +617,6 @@ unregister_foreign_names() ->
 -spec add_attribute(Args) -> {ok, Args} | {error, Reason} when
       Args :: [term()],
       Reason :: term().
-
 add_attribute(Args) ->
     case is_list(Args) of
         true ->
@@ -626,7 +628,6 @@ add_attribute(Args) ->
 -spec remove_attribute(Args) -> {ok, Args} | {error, Reason} when
       Args :: [term()],
       Reason :: term().
-
 remove_attribute(Args) ->
     case is_list(Args) of
         true ->
@@ -650,6 +651,7 @@ request(Req, Time) ->
 	_Other -> 
 	    {error, global_name_server_not_runnig}
     end.
+
 
 %%%-----------------------------------------------------------------
 %%% Call-back functions from gen_server
@@ -818,7 +820,7 @@ handle_call({register, {SGroupName, Name}, Pid, Method}, {FromPid, _Tag}, S0) ->
     S = ins_name(SGroupName, Name, Pid, Method, FromPid, [], S0),
     {reply, yes, S};
 
-handle_call({unregister, SGroupName, Name}, _From, S0) ->	%NC
+handle_call({unregister, SGroupName, Name}, _From, S0) ->
     S = delete_global_name2(SGroupName, Name, S0),
     {reply, ok, S};
 
@@ -855,9 +857,8 @@ handle_call(get_synced, _From, S) ->
     {reply, S#state.synced, S};
 
 handle_call({sync, Nodes}, From, S) ->
-    %% If we have several global groups, this won't work, since we will
-    %% do start_sync on a nonempty list of nodes even if the system
-    %% is quiet.
+    %% This will not work on an s_group node, since we will do start_sync
+    %% on a nonempty list of nodes even if the system is quiet.
     Pid = start_sync(lists:delete(node(), Nodes) -- S#state.synced, From),
     {noreply, S#state{syncers = [Pid | S#state.syncers]}};
 
@@ -908,11 +909,10 @@ handle_call(Request, From, S) ->
                              [Request, From]),
     {noreply, S}.
 
+
 %%========================================================================
 %% init_connect
-%%
 %%========================================================================
-
 -spec handle_cast(term(), state()) -> {'noreply', state()}.
 
 handle_cast({init_connect, Vsn, Node, InitMsg}, S) ->
@@ -989,7 +989,6 @@ handle_cast({exchange_ops, Group, Node, MyTag, Ops, Resolved}, S0) ->  %% added 
     S = trace_message(S0, {exit_resolver, Node}, [MyTag]),
     case get({sync_tag_my, Node}) of
 	MyTag ->
-            %% Known = S#state.known,
             Known = case lists:keyfind(Group, 1, S#state.known) of 
                          false -> [];
                          {Group, Nodes} -> Nodes
@@ -1004,7 +1003,6 @@ handle_cast({exchange_ops, Group, Node, MyTag, Ops, Resolved}, S0) ->  %% added 
                     ?debug({"put_save_ops1_Node_Ops", Node, Ops}),
 		    put({save_ops, Node}, Ops),
                     NewS = resolved(Group, Node, HisResolved, HisKnown, Names_ext,S),
-		    %% Unregister foreign names
 		    ?debug({"handle_exchange_ops_NewS", NewS}),
                     {noreply, NewS};
                 undefined -> 
@@ -1043,10 +1041,6 @@ handle_cast({exchange_ops_s, Node, CmnSGroups, MyTag, Ops, Resolved}, S0) ->
 		                      HisResolved, Names_ext, S),
 		    ?debug({"handle_exchange_ops_NewS", NewS}),
                     {noreply, NewS};
-		    %% Unregister foreign names
-		    %%NewS1 = unregister_foreign_names(NewS),
-		    %%?debug({"handle_exchange_ops_NewS1", NewS1}),
-                    %%{noreply, NewS1};
                 undefined -> 
                     ?debug({"put_save_ops4_Node_Ops", Node, Ops}),
 		    put({save_ops, Node}, Ops),
@@ -1062,7 +1056,7 @@ handle_cast({exchange_ops_s, Node, CmnSGroups, MyTag, Ops, Resolved}, S0) ->
 %%
 %% Here the name clashes are resolved.
 %%========================================================================
-handle_cast({resolved, Group, Node, HisResolved, HisKnown, _HisKnown_v2,  %%added Group by HL;
+handle_cast({resolved, Group, Node, HisResolved, HisKnown, _HisKnown_v2,
              Names_ext, MyTag}, S) ->
     %% Sent from global_name_server at Node.
     ?trace({'####', resolved, {his_resolved,HisResolved}, {node,Node}}),
@@ -1287,7 +1281,6 @@ handle_info({whereis, Name, From}, S) ->
     {noreply, S};
 
 handle_info(known, S) ->
-    io:format(">>>> ~p\n",[S#state.known]),
     {noreply, S};
 
 handle_info({init_own_s_groups, OwnSGroups}, S0) ->
@@ -1410,15 +1403,12 @@ handle_node_up(Group, Node, S0) ->
             NotAPid = no_longer_a_pid,
             Locker = {locker, NotAPid, S2#state.known, S2#state.the_locker},
             InitC = {init_connect, {?vsn, MyTag}, node(), Locker},
-            %%?debug(InitC),
 	    Rs = S2#state.resolvers,
             ?trace({casting_init_connect, {node,Node},{initmessage,InitC},
                     {resolvers,Rs}}),
-	    gen_server:cast({global_name_server, Node}, InitC),		%NC?
+	    gen_server:cast({global_name_server, Node}, InitC),
             Resolver = start_resolver(Group, Node, MyTag),
-	    %%?debug({"node_up_S2", S2}),
             S = trace_message(S2, {new_resolver, Node}, [MyTag, Resolver]),
-	    %%?debug({"node_up_S", S}),
 	    {noreply, S#state{resolvers = [{Node, MyTag, Resolver} | Rs]}}
     end.
 
@@ -1489,7 +1479,6 @@ replace_no_group(Group, S) ->
     Known = S#state.known,
     Synced = S#state.synced,
     ?debug({"replace_no_group_Group_Known_Synced", Group, Known, Synced}),
-    %% The state should depend on whether Group=='no_group'
     S1 = case lists:keyfind(no_group, 1, Known) of
              false ->
 	         S;
@@ -1717,7 +1706,6 @@ exchange(Node, NameList, Resolvers) ->
     end.
 
 resolved(Group, Node, HisResolved, HisKnown, Names_ext, S0) -> 
-    %%?debug({"resolved", }),
     ?debug({"resolved_m", Group, Node, HisResolved, HisKnown, Names_ext}),
     ?debug({"resolved_S0", S0}),
     Ops = erase({save_ops, Node}) ++ HisResolved,
@@ -1860,7 +1848,6 @@ do_whereis(Name, From) ->
     end.
 
 -spec terminate(term(), state()) -> 'ok'.
-
 terminate(_Reason, _S) ->
     true = ets:delete(global_names),
     true = ets:delete(global_names_ext),
@@ -1870,7 +1857,6 @@ terminate(_Reason, _S) ->
     ok.
 
 -spec code_change(term(), state(), term()) -> {'ok', state()}.
-
 code_change(_OldVsn, S, _Extra) ->
     {ok, S}.
 
@@ -1878,7 +1864,6 @@ code_change(_OldVsn, S, _Extra) ->
 %% is that locks can be used at the same time as name resolution takes
 %% place.
 start_resolver(Group, Node, MyTag) ->
-    %%?debug({"start_resolver_info", info()}),
     spawn(fun() -> resolver(Group, Node, MyTag) end).
 
 resolver(Group, Node, Tag) ->
@@ -1916,8 +1901,8 @@ resend_pre_connect(Node) ->
 	    ok
     end.
 
-ins_name(SGroupName, Name, Pid, Method, FromPidOrNode, ExtraInfo, S0) ->	%NC
-    ?trace({ins_name,insert,{name,Name},{pid,Pid}}),   % NC?
+ins_name(SGroupName, Name, Pid, Method, FromPidOrNode, ExtraInfo, S0) ->
+    ?trace({ins_name,insert,{name,Name},{pid,Pid}}),
     S1 = delete_global_name_keep_pid(SGroupName, Name, S0),
     S = trace_message(S1, {ins_name, node(Pid)}, [{SGroupName, Name}, Pid]),
     insert_global_name(SGroupName, Name, Pid, Method, FromPidOrNode,
@@ -2032,7 +2017,7 @@ kill_monitor_proc(Pid, Pid) ->
 kill_monitor_proc(RPid, _Pid) ->
     exit(RPid, kill).
 
-do_ops(Ops, ConnNode, Names_ext, ExtraInfo, S0) ->	%NC? ins_name/6
+do_ops(Ops, ConnNode, Names_ext, ExtraInfo, S0) ->
     ?trace({do_ops, {ops,Ops}}),
 
     XInserts = [{{SGroupName, Name}, Pid, RegNode, Method} ||
@@ -2097,10 +2082,7 @@ sync_other(Group, Node, N) ->
             gen_server:cast({global_name_server, Node}, {in_sync, Group, node(),true})
     end.
 
-%%insert_global_name(Name, Pid, Method, FromPidOrNode, ExtraInfo, S) ->	%NC
-%%    insert_global_name(undefined, Name, Pid, Method, FromPidOrNode, ExtraInfo, S).
-
-insert_global_name(SGroupName, Name, Pid, Method, FromPidOrNode, ExtraInfo, S) ->	%NC
+insert_global_name(SGroupName, Name, Pid, Method, FromPidOrNode, ExtraInfo, S) ->
     ?debug({"insert_global_name", SGroupName, Name}),
     {RPid, Ref} = do_monitor(Pid),
 
@@ -2166,7 +2148,7 @@ delete_global_name_keep_pid(SGroupName, Name, S) ->
             S
     end.
 
-delete_global_name2(SGroupName, Name, S) ->	%NC
+delete_global_name2(SGroupName, Name, S) ->
     case ets:lookup(global_names, {SGroupName, Name}) of
         [{{SGroupName, Name}, Pid, _Method, RPid, Ref}] ->
             true = ets:delete(global_names, {SGroupName, Name}),
@@ -2175,20 +2157,20 @@ delete_global_name2(SGroupName, Name, S) ->	%NC
             S
     end.
 
-delete_global_name2(SGroupName, Name, Pid, RPid, Ref, S) ->	%NC
+delete_global_name2(SGroupName, Name, Pid, RPid, Ref, S) ->
     true = erlang:demonitor(Ref, [flush]),
     kill_monitor_proc(RPid, Pid),
     delete_global_name({SGroupName, Name}, Pid),
-    ?trace({delete_global_name,{item,Name},{pid,Pid}}),	%NC?
+    ?trace({delete_global_name,{item,Name},{pid,Pid}}),
     true = ets:delete_object(global_pid_names, {Pid, {SGroupName, Name}}),
     true = ets:delete_object(global_pid_names, {Ref, {SGroupName, Name}}),
     case ets:lookup(global_names_ext, {SGroupName, Name}) of
 	[{{SGroupName, Name}, Pid, RegNode}] ->
             true = ets:delete(global_names_ext, {SGroupName, Name}),
-            ?trace({delete_global_name, {name,Name,{pid,Pid},{RegNode,Pid}}}),	%NC
+            ?trace({delete_global_name, {name,Name,{pid,Pid},{RegNode,Pid}}}),
 	    dounlink_ext(Pid, RegNode);
 	[] ->
-            ?trace({delete_global_name,{name,Name,{pid,Pid},{node(Pid),Pid}}}),	%NC
+            ?trace({delete_global_name,{name,Name,{pid,Pid},{node(Pid),Pid}}}),
             ok
     end,
     trace_message(S, {del_name, node(Pid)}, [{SGroupName, Name}, Pid]).
@@ -2684,13 +2666,13 @@ exchange_names([{{SGroupName, Name}, Pid, Method} | Tail], Node, Ops, Res) ->
 		{badrpc, Badrpc} ->
 		    error_logger:info_msg("global: badrpc ~w received when "
 					  "conflicting name ~w was found\n",
-					  [Badrpc, Name]),     %NC?
+					  [Badrpc, {SGroupName, Name}]),
 		    Op = {insert, {{SGroupName, Name}, Pid, Method}},
 		    exchange_names(Tail, Node, [Op | Ops], Res);
 		Else ->
 		    error_logger:info_msg("global: Resolve method ~w for "
 					  "conflicting name ~w returned ~w\n",
-					  [Method, Name, Else]),	%NC?
+					  [Method, {SGroupName, Name}, Else]),
 		    Op = {delete, {SGroupName, Name}},
 		    exchange_names(Tail, Node, [Op | Ops], [Op | Res])
 	    end;
@@ -2864,7 +2846,7 @@ trace_message(M, X) ->
 %%-----------------------------------------------------------------
 %% Each sync process corresponds to one call to sync. Each such
 %% process asks the global_name_server on all Nodes if it is in sync
-%% with Nodes. If not, that (other) node spawns a syncer process that
+%% with Nodes. If not, then (other) node spawns a syncer process that
 %% waits for global to get in sync with all Nodes. When it is in
 %% sync, the syncer process tells the original sync process about it.
 %%-----------------------------------------------------------------
@@ -2888,15 +2870,15 @@ sync_loop(Nodes, From) ->
     end.
 
 %%%=======================================================================
-%%% Get the current global_groups definition
+%%% Get the current group definition
 %%%=======================================================================
 check_sync_nodes() ->
     case get_own_nodes() of
 	{ok, all} ->
 	    nodes();
 	{ok, NodesNG} ->
-	    %% global_groups parameter is defined, we are not allowed to sync
-	    %% with nodes not in our own global group.
+	    %% s_group parameter is defined, we are not allowed to sync
+	    %% with nodes not in our own group.
             intersection(nodes(), NodesNG);
 	{error, _} = Error ->
 	    Error
@@ -2907,8 +2889,8 @@ check_sync_nodes(SyncNodes) ->
 	{ok, all} ->
 	    SyncNodes;
 	{ok, NodesNG} ->
-	    %% global_groups parameter is defined, we are not allowed to sync
-	    %% with nodes not in our own global group.
+	    %% s_group parameter is defined, we are not allowed to sync
+	    %% with nodes not in our own group.
 	    OwnNodeGroup = intersection(nodes(), NodesNG),
 	    IllegalSyncNodes = (SyncNodes -- [node() | OwnNodeGroup]),
 	    case IllegalSyncNodes of
@@ -2944,8 +2926,6 @@ loop_the_registrar() ->
         {trans_s_group, Fun, SGroupName, From} ->
             ?trace({loop_the_registrar, self(), Fun, SGroupName, From}),
             gen_server:reply(From, trans_s_group(Fun, SGroupName));
-	    %%DopRes = trans_s_group(Fun, SGroupName),
-	    %%gen_server:reply(From, DopRes);
 	Other ->
             unexpected_message(Other, register)
     end,
@@ -2959,8 +2939,10 @@ unexpected_message(Message, What) ->
                              "received an unexpected message:\n~p\n", 
                              [What, Message]).
 
-%%% Utilities
 
+%%%=======================================================================
+%%% Utilities
+%%%=======================================================================
 %% When/if erlang:monitor() returns before trying to connect to the
 %% other node this function can be removed.
 do_monitor(Pid) ->
@@ -2999,8 +2981,8 @@ unregister_foreign_names(S) ->
     unregister_foreign_names(AllNames, OwnGroups, S).
 
 unregister_foreign_names([], _, S) ->
-    NewAllNames = registered_names(all_names),
-    ?debug({"unregister_foreign_names_NewAllNames", NewAllNames}),
+    %%NewAllNames = registered_names(all_names),
+    %%?debug({"unregister_foreign_names_NewAllNames", NewAllNames}),
     S;
 unregister_foreign_names([{SGroupName, _Name} | RemNames],
                          [no_group], S) when SGroupName=='undefined' ->
@@ -3086,9 +3068,9 @@ resolved_s(Node, HisCmnSGroups, HisCmnKnown, HisResolved, Names_ext, S0) ->
     NewNodes = [Node | HisCmnKnownNodes],
 
     %% CmbNodeSGroups::[{Node, SGroups}]
-    %% Turn HisCmnKnown into [{Node1, SGroups1}]. The turn
+    %% Transform HisCmnKnown into [{Node1, SGroups1}]. Then transform
     %% s_group:own_s_groups() into [{Node2, SGroups2}]
-    %% When Node1==Node2 => SGroups3=lists:usort(SGroups1++SGroups2)
+    %% When Node1==Node2 SGroups3 = lists:usort(SGroups1++SGroups2)
     HisCmnNodeSGroups = s_group:ng_pairs(HisCmnKnown),
     OwnSGroupNodes = S0#state.own_s_groups,
     OwnNodeSGroups = s_group:ng_pairs(OwnSGroupNodes),
@@ -3203,8 +3185,6 @@ new_nodes_f([{Node, CSGroups} | NodeSGroups], HisCmnKnown, Ops,
 
 new_known_synced([], _, _, _, S) ->
     ?debug({"new_known_synced_Sa", S}),
-    %% Send info to s_group
-    %%s_group_synced_info(S#state.synced),
     S;
 new_known_synced([Group | CmnSGroups], Node, CmnKnown, HisCmnKnown, S) ->
     ?debug({"new_known_synced_S", S}),
@@ -3288,7 +3268,7 @@ add_node_known_synced([Group | SGroups], Node, Known, Synced) ->
     add_node_known_synced(SGroups, Node, NewKnown, NewSynced).
 
 %% Combine information from SGroups and SGroupNodes, and add Node
-%% to the s_groups
+%% to the SGroups
 combine_known(Node, SGroups, SGroupNodes) ->
     combine_known(Node, SGroups, SGroupNodes, []).
 
