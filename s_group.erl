@@ -40,7 +40,7 @@
 	 own_nodes/0, own_nodes/1,
 	 own_s_groups/0,
 	 sync/0,
-	 new_s_group/2,
+	 new_s_group/1, new_s_group/2,
 	 add_nodes/2,
 	 info/0,
 	 delete_s_group/1, remove_nodes/2,
@@ -229,6 +229,40 @@ whereis_name(Node, SGroupName, Name) ->
 
 s_group_conflict_check(SGroupName) ->
     request({s_group_conflict_check, SGroupName}).
+
+-spec new_s_group(Nodes) -> {ok, SGroupName, Nodes} |
+      			    {error, Reason} when
+      Nodes :: [Node :: node()],
+      SGroupName :: group_name(),
+      Reason :: term().
+new_s_group(Nodes0) ->
+    Nodes = lists:usort(Nodes0),
+    case Nodes of
+        [] ->
+	   {error, empty_node_list};
+	_ -> 
+	   case lists:member(node(), Nodes) of
+	       false ->
+                    {error, remote_s_group};
+	       true ->
+	            new_s_group_do(Nodes)
+	   end
+    end.
+
+new_s_group_do(Nodes) ->
+    %% Generate SGroupName
+    case erlang:list_to_atom(erlang:binary_to_list(crypto:strong_rand_bytes(30))) of
+        {error, _} ->
+	    new_s_group_do(Nodes);
+	SGroupName ->
+	    %% Create a new s_group
+	    case request({new_s_group, SGroupName, Nodes}) of
+                {ok, SGroupName, Nodes1} ->
+	    	    {ok, SGroupName, Nodes1};
+	    	_ ->
+	    	    new_s_group_do(Nodes)
+    	    end
+    end.
 
 -spec new_s_group(SGroupName, Nodes) -> {ok, SGroupName, Nodes} |
       			                {error, Reason} when
