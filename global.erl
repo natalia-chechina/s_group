@@ -98,7 +98,7 @@
 
 -define(debug(_), ok). 
 
-%-define(debug(Term), erlang:display(Term)).
+%%-define(debug(Term), erlang:display(Term)).
 
 
 %%-----------------------------------------------------------------
