@@ -38,8 +38,7 @@
 	 own_s_groups/0, get_known/0,	 
 	 sync/0, sync/1]).
 
--export([unregister_foreign_names/0,
-	 add_attribute/1, remove_attribute/1, registered_attributes/0]).
+-export([unregister_foreign_names/0]).
 
 -export([set_lock/1, set_lock/2, set_lock/3, del_lock/1, del_lock/2,
 	 trans/2, trans/3, trans/4,
@@ -137,7 +136,7 @@
 %%-----------------------------------------------------------------
 -type group_name()  :: atom().
 -type group_tuple() :: {GroupName :: group_name(), [node()]}.
-                 
+
 -record(state, {connect_all	      :: boolean(),
 		own_s_groups = []     :: [group_tuple()],
 		known = []            :: [group_tuple()],
@@ -146,7 +145,6 @@
 		syncers = []	      :: [pid()],
 		node_name = node()    :: node(),
 		s_group = no_group    :: group_name(),
-		attributes = [],
 		the_locker,
 		the_registrar,
 		trace,
@@ -611,36 +609,6 @@ info() ->
 unregister_foreign_names() ->
     request({unregister_foreign_names}).
 
-%%-----------------------------------------------------------------
-%% Adding, removeing, and listing attributes
-%%-----------------------------------------------------------------
--spec add_attribute(Args) -> {ok, Args} | {error, Reason} when
-      Args :: [term()],
-      Reason :: term().
-add_attribute(Args) ->
-    case is_list(Args) of
-        true ->
-	    request({add_attribute, Args});
-	_ ->
-	    {error, parameter_should_be_a_list}
-    end.
-
--spec remove_attribute(Args) -> {ok, Args} | {error, Reason} when
-      Args :: [term()],
-      Reason :: term().
-remove_attribute(Args) ->
-    case is_list(Args) of
-        true ->
-	    request({remove_attribute, Args});
-	_ ->
-	    {error, parameter_should_be_a_list}
-    end.
-
-registered_attributes() ->
-    request(registered_attributes).
-
-%%-----------------------------------------------------------------
-
 request(Req) ->
     request(Req, infinity).
 
@@ -890,17 +858,6 @@ handle_call(stop, _From, S) ->
 handle_call({unregister_foreign_names}, _From, S) ->
     NewS = unregister_foreign_names(S),
     {reply, ok, NewS};
-
-handle_call({add_attribute, Args}, _From, S) ->
-    NewArgs = lists:usort(S#state.attributes++Args),
-    {reply, ok, S#state{attributes = NewArgs}};
-
-handle_call({remove_attribute, Args}, _From, S) ->
-    NewArgs = lists:usort(S#state.attributes--Args),
-    {reply, ok, S#state{attributes = NewArgs}};
-
-handle_call(registered_attributes, _From, S) ->
-    {reply, S#state.attributes, S};
 
 handle_call(Request, From, S) ->
     error_logger:warning_msg("The global_name_server "
